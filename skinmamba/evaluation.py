@@ -85,21 +85,14 @@ def evaluate_checkpoint(checkpoint_path, data_root=None, output_dir=None, device
         rows, scores = evaluate_model(model, loader, str(device), config["evaluation"]["threshold"],
             precision=config["training"]["precision"], save_dir=output_dir / "predictions" / domain if save_predictions else None)
         write_csv(output_dir / f"{domain}_per_image.csv", rows)
-        contaminated = set(audit["tests"][domain]["overlap_ids"])
-        subsets = [("full", rows, scores)]
-        if contaminated:
-            clean = [r for r in rows if r["id"] not in contaminated]
-            subsets.append(("clean", clean, aggregate_metrics(clean) if clean else {}))
-        for subset, selected, metrics in subsets:
-            row = {"source": config["data"]["source"], "target": domain, "subset": subset,
-                   "seed": config["seed"], "variant": config["model"]["variant"], "n": len(selected),
-                   "overlap_count_full": len(contaminated), "external": domain != config["data"]["source"],
-                   "exact_duplicate_clean": not contaminated or subset == "clean",
-                   **metrics, **{k: complexity.get(k) for k in ("params", "flops", "size_mb", "fps",
-                       "flops_scope", "flops_complete", "device_name", "precision", "latency_p50_ms",
-                       "latency_p95_ms", "peak_memory_mb")}}
-            results.append(row)
-            print(f"{domain}/{subset}: n={len(selected)}, dice={metrics.get('dice')}, iou={metrics.get('iou')}, hd95={metrics.get('hd95')}", flush=True)
+        row = {"source": config["data"]["source"], "target": domain, "subset": "full",
+               "seed": config["seed"], "variant": config["model"]["variant"], "n": len(rows),
+               "external": domain != config["data"]["source"],
+               **scores, **{k: complexity.get(k) for k in ("params", "flops", "size_mb", "fps",
+                   "flops_scope", "flops_complete", "device_name", "precision", "latency_p50_ms",
+                   "latency_p95_ms", "peak_memory_mb")}}
+        results.append(row)
+        print(f"{domain}/full: n={len(rows)}, dice={scores.get('dice')}, iou={scores.get('iou')}, hd95={scores.get('hd95')}", flush=True)
     report = {"checkpoint": str(Path(checkpoint_path).resolve()), "checkpoint_sha256": file_sha256(checkpoint_path),
         "selected_epoch": checkpoint["epoch"] + 1, "config": config, "environment": environment(),
         "profile": complexity, "audit": audit, "results": results,

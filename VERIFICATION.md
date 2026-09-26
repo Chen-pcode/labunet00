@@ -6,7 +6,7 @@
 
 命令：`python -m pytest -q --junitxml=reports/pytest_results.xml`
 
-结果：**48 passed, 1 skipped**。跳过的是需要真实CUDA及官方扩展的数值对照，并非失败项目被忽略。
+当前版本结果：**61 passed, 1 skipped**。跳过的是需要真实CUDA及官方扩展的数值对照，并非失败项目被忽略。
 
 覆盖：
 
@@ -18,6 +18,9 @@
 - 真实训练引擎在小型合成数据上跑2 epoch；连续运行和1+1 epoch续训最终模型逐张量完全相同。
 - 最佳checkpoint对三域的完整公共评估、CSV输出和全部请求字段。
 - 聚合隔离不同阈值、数据fingerprint及GPU；同checkpoint同协议重复评估不算额外种子。
+- 新命令参数实际传入训练：baseline/main/消融、epoch和seed；互斥与非法输入检查。
+- 实际执行CLI的 `run --baseline --epochs 1 --seed 2026`，保存的checkpoint确认1轮与seed=2026，完成三域full评估。
+- 即使测试图与源训练图重复，仍完整评估所有测试样本且不产生clean行；旧报告中的clean行不进入汇总。
 
 ## 用户数据检查
 

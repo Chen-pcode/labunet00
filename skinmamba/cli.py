@@ -6,7 +6,7 @@ import math
 import statistics
 from pathlib import Path
 
-from .config import load_config
+from .config import ABLATIONS, apply_overrides, load_config, select_experiment, validate_config
 from .utils import write_json, write_csv
 
 
@@ -33,8 +33,11 @@ def aggregate_runs(root, output):
             continue
         seen.add(identity)
         for row in report["results"]:
+            # Older reports may contain clean subsets; summaries now use full tests only.
+            if row.get("subset", "full") != "full":
+                continue
             model_key = json.dumps(report["config"]["model"], sort_keys=True)
-            key = (row["source"], row["target"], row["subset"], model_key, protocol_key)
+            key = (row["source"], row["target"], "full", model_key, protocol_key)
             groups.setdefault(key, []).append(row)
     result = []
     for key, rows in groups.items():
@@ -64,6 +67,15 @@ def main(argv=None):
     for name in ("train", "run"):
         p = sub.add_parser(name, help="run=train then evaluate best on all 3 test domains")
         p.add_argument("--config", default="configs/baseline_isic2018.yaml")
+        choice = p.add_mutually_exclusive_group()
+        choice.add_argument("--baseline", dest="experiment", action="store_const", const="baseline",
+                            help="Select the original baseline variant")
+        choice.add_argument("--main", "--main-experiment", dest="experiment", action="store_const", const="main",
+                            help="Select the main experiment: sampled_geometry")
+        choice.add_argument("--ablation", choices=ABLATIONS, help="Select one named ablation")
+        p.add_argument("--epoch", "--epochs", dest="epochs", type=positive_int,
+                       help="Total training epochs (not extra epochs when resuming)")
+        p.add_argument("--seed", type=seed_value, help="Random seed, overriding YAML and --set seed")
         p.add_argument("--set", action="append", default=[], dest="overrides")
         p.add_argument("--data-root")
         p.add_argument("--run-dir", required=True)
@@ -88,9 +100,9 @@ def main(argv=None):
     args = parser.parse_args(argv)
     if args.command in ("train", "run"):
         from .engine import train
-        config = load_config(args.config, args.overrides)
-        if args.data_root:
-            config["data"]["root"] = args.data_root
+        config = training_config(args)
+        print(f"experiment={config['name']} variant={config['model']['variant']} "
+              f"source={config['data']['source']} epochs={config['training']['epochs']} seed={config['seed']}", flush=True)
         if args.command == "run" and args.stop_after_epoch and args.stop_after_epoch < config["training"]["epochs"]:
             raise ValueError("Use train (not run) for an interrupted session; final test evaluation follows completed training.")
         best = train(config, args.run_dir, args.device, args.resume, args.stop_after_epoch)
@@ -111,6 +123,33 @@ def main(argv=None):
             print(source, {k:(v["total"], v["clean_count"]) for k,v in report["tests"].items()})
     else:
         aggregate_runs(args.root, args.output)
+
+
+def positive_int(value):
+    number = int(value)
+    if number < 1:
+        raise argparse.ArgumentTypeError("epochs must be a positive integer")
+    return number
+
+
+def seed_value(value):
+    number = int(value)
+    if not 0 <= number < 2**32:
+        raise argparse.ArgumentTypeError("seed must be in [0, 2**32)")
+    return number
+
+
+def training_config(args):
+    config = select_experiment(load_config(args.config), args.experiment, args.ablation)
+    config = apply_overrides(config, args.overrides)
+    if args.epochs is not None:
+        config["training"]["epochs"] = args.epochs
+    if args.seed is not None:
+        config["seed"] = args.seed
+    if args.data_root:
+        config["data"]["root"] = args.data_root
+    validate_config(config)
+    return config
 
 
 if __name__ == "__main__":

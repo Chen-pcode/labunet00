@@ -14,7 +14,7 @@ from skinmamba.data import (SkinDataset, make_manifest, audit_manifest, paired_f
 from skinmamba.engine import train, resume_signature
 from skinmamba.evaluation import evaluate_checkpoint
 from skinmamba.utils import load_checkpoint
-from skinmamba.cli import aggregate_runs
+from skinmamba.cli import aggregate_runs, main
 
 
 @pytest.fixture
@@ -69,6 +69,10 @@ def test_source_validation_exclusion_and_deterministic_augmentation(fixture_data
 
 def test_complete_train_resume_and_three_domain_evaluation(fixture_data, tmp_path):
     torch.set_num_threads(1)
+    # An overlapping test image must still be evaluated as part of the full set.
+    source = fixture_data / "isic2018/train/images/isic2018_train_0.png"
+    target = fixture_data / "isic2017/test/images/isic2017_test_0.png"
+    target.write_bytes(source.read_bytes())
     config = load_config(Path(__file__).resolve().parents[1] / "configs/smoke_cpu.yaml")
     config["data"]["root"] = str(fixture_data)
     config["model"]["d_state"] = 2
@@ -83,6 +87,9 @@ def test_complete_train_resume_and_three_domain_evaluation(fixture_data, tmp_pat
     assert one["best_epoch"] == two["best_epoch"]
     report = evaluate_checkpoint(resumed / "best.pt", device="cpu", profile_iterations=2)
     assert {row["target"] for row in report["results"]} == {"isic2017", "isic2018", "ph2"}
+    assert len(report["results"]) == 3
+    assert all(row["subset"] == "full" and row["n"] == 2 for row in report["results"])
+    assert report["audit"]["tests"]["isic2017"]["overlap_ids"] == ["isic2017_test_0"]
     for row in report["results"]:
         for key in ("params", "flops", "size_mb", "fps", "dice", "iou", "miou", "accuracy", "sensitivity", "specificity", "f1", "hd95"):
             assert key in row
@@ -106,7 +113,8 @@ def test_aggregation_separates_data_threshold_and_hardware(tmp_path):
     config = load_config(Path(__file__).resolve().parents[1] / "configs/base.yaml")
     row = dict(source="isic2018", target="ph2", subset="full", seed=42,
                dice=.8, hd95=4.0, hd95_failed_count=1, hd95_finite_count=199)
-    base = {"config": config, "results": [row], "checkpoint_sha256": "one-checkpoint",
+    legacy_clean = {**row, "subset": "clean", "dice": .99}
+    base = {"config": config, "results": [row, legacy_clean], "checkpoint_sha256": "one-checkpoint",
             "audit": {"fingerprint": "data-v1"}, "profile": {"device_name": "T4", "precision": "fp32"}}
     variants = [base]
     for key, value in (("device", "P100"), ("threshold", .7), ("fingerprint", "data-v2")):
@@ -126,3 +134,56 @@ def test_aggregation_separates_data_threshold_and_hardware(tmp_path):
     result = aggregate_runs(tmp_path, tmp_path / "aggregate.csv")
     assert len(result) == 4
     assert all(r["n_runs"] == 1 and r["hd95_failed_count_sum"] == 1 for r in result)
+    assert all(r["subset"] == "full" and r["dice_mean"] == .8 for r in result)
+
+
+@pytest.mark.parametrize("flag,variant", [
+    (["--baseline"], "baseline"), (["--main"], "sampled_geometry"),
+    (["--main-experiment"], "sampled_geometry"),
+    (["--ablation", "sampling_only"], "sampled_index"),
+    (["--ablation", "constant_scale"], "sampled_constant"),
+    (["--ablation", "no_bridge"], "baseline"),
+    (["--ablation", "bce_only"], "baseline"),
+])
+def test_cli_experiment_epoch_seed_reach_training(monkeypatch, tmp_path, flag, variant):
+    captured = {}
+    def record(config, run_dir, device, resume, stop):
+        captured.update(config)
+        return tmp_path / "best.pt"
+    monkeypatch.setattr("skinmamba.engine.train", record)
+    config_path = Path(__file__).resolve().parents[1] / "configs/baseline_isic2017.yaml"
+    main(["train", *flag, "--epoch", "1", "--seed", "2026", "--config", str(config_path),
+          "--run-dir", str(tmp_path / "run"), "--set", "seed=42", "--set", "training.epochs=20"])
+    assert captured["model"]["variant"] == variant
+    assert captured["data"]["source"] == "isic2017"
+    assert captured["training"]["epochs"] == 1 and captured["seed"] == 2026
+    assert captured["training"]["t_max"] == 50
+    if flag[-1] == "no_bridge":
+        assert captured["model"]["bridge"] is False
+    if flag[-1] == "bce_only":
+        assert captured["loss"]["dice_weight"] == 0
+
+
+@pytest.mark.parametrize("flags", [["--epoch", "0"], ["--seed", "-1"],
+    ["--baseline", "--main"], ["--main", "--ablation", "sampling_only"],
+    ["--ablation", "unknown"]])
+def test_cli_rejects_invalid_experiment_settings(tmp_path, flags):
+    with pytest.raises(SystemExit) as exc:
+        main(["train", "--run-dir", str(tmp_path / "run"), *flags])
+    assert exc.value.code == 2
+
+
+def test_cli_runs_selected_baseline_for_one_epoch_and_seed(fixture_data, tmp_path):
+    torch.set_num_threads(1)
+    config_path = Path(__file__).resolve().parents[1] / "configs/smoke_cpu.yaml"
+    run_dir = tmp_path / "cli_one_epoch"
+    main(["run", "--baseline", "--epochs", "1", "--seed", "2026", "--config", str(config_path),
+          "--data-root", str(fixture_data), "--run-dir", str(run_dir), "--device", "cpu",
+          "--set", "model.d_state=2"])
+    checkpoint = load_checkpoint(run_dir / "last.pt")
+    assert checkpoint["epoch"] == 0 and len(checkpoint["history"]) == 1
+    assert checkpoint["config"]["seed"] == 2026
+    assert checkpoint["config"]["model"]["variant"] == "baseline"
+    report = json.loads((run_dir / "evaluation/results.json").read_text(encoding="utf-8"))
+    assert len(report["results"]) == 3
+    assert all(row["subset"] == "full" and row["seed"] == 2026 for row in report["results"])

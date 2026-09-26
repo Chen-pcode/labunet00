@@ -2,7 +2,7 @@
 
 以官方 **UltraLight VM-UNet** 为 baseline 的独立训练、消融和跨数据集评估项目。原下载仓库和 `data` 文件夹均不修改。默认参数量 49,457；正式实验使用 Kaggle 单张 T4、256×256 输入。
 
-**先读数据审计：ISIC2018 训练/验证与 ISIC2017 测试重合 532/600，去重后仅 68 张。全量测试不能当作严格跨域结果。** 项目仍按要求输出三个完整测试集，另外输出排除已见图像后的子集结果。PH² 全部 200 张只用于测试。
+测试按用户提供的官方划分，**每个目标数据集只报告完整测试集（`subset=full`）**，不生成clean子集成绩。PH² 全部200张只用于测试。数据重叠检查保留在审计JSON中：官方划分之间仍可能重用图像，跨数据集结果需结合这些记录解释。
 
 ## 大体框架
 
@@ -12,7 +12,7 @@
 - `skinmamba/data.py`：图像/掩码配对、成对增强、ID+解码 RGB 哈希审计。
 - `skinmamba/engine.py`：训练、验证、完整断点续训，优化器/调度器/AMP/RNG/历史均保存。
 - `skinmamba/metrics.py`、`profiling.py`：所有模型共用的分割指标与复杂度/速度统计。
-- `skinmamba/evaluation.py`：三个测试域、全量/排重子集、逐图结果和掩码导出。
+- `skinmamba/evaluation.py`：三个完整测试域、逐图结果和掩码导出。
 - `configs/ablations/`：机制、执行路径、宽度、bridge、损失的独立开关。
 - `scripts/`、`Kaggle_Quickstart.ipynb`：Kaggle 环境安装、GPU 核验和实验矩阵。
 
@@ -27,12 +27,12 @@ data/
 
 ISIC 使用 `ISIC_xxx.jpg → ISIC_xxx_segmentation.png`；PH² 图像和掩码同名。掩码使用最近邻缩放并二值化。图片已经为256²，HD95 单位是该分辨率的像素。
 
-| 训练来源 | 训练 | 原始验证→实际验证 | ISIC2017全量/排重测试 | ISIC2018测试 | PH²测试 |
+| 训练来源 | 训练 | 原始验证→实际验证 | ISIC2017测试 | ISIC2018测试 | PH²测试 |
 |---|---:|---:|---:|---:|---:|
-| ISIC2017 | 2000 | 150→149 | 600 / 597 | 1000 | 200 |
-| ISIC2018 | 2594 | 100→100 | 600 / 68 | 1000 | 200 |
+| ISIC2017 | 2000 | 150→149 | 600 | 1000 | 200 |
+| ISIC2018 | 2594 | 100→100 | 600 | 1000 | 200 |
 
-ISIC2017 排重测试 597 张仍有 2 组测试内重复，共595个不同 RGB；当前不擅自改变用户提供测试集的权重。排重指排除与源域训练/验证相同 ID 或 RGB 的图像，不保证患者级独立或近重复排除。完整报告见 [数据评估协议](reports/DATA_EVALUATION_PROTOCOL.md)。验证重复默认只在加载时排除，设置 `data.validation_overlap_policy=error` 可要求遇到重复就终止。
+测试不排除重复样本，也不输出clean成绩；审计记录图像ID/解码RGB重叠，不保证患者级独立或近重复排除。详见 [数据评估协议](reports/DATA_EVALUATION_PROTOCOL.md)。源域验证仍使用已有的加载时排除训练重复策略，设置 `data.validation_overlap_policy=error` 可要求遇到重复就终止。
 
 ## Kaggle 运行
 
@@ -61,6 +61,35 @@ python -m skinmamba evaluate --checkpoint /kaggle/working/runs/isic2018_baseline
 
 `python -m skinmamba run ...` 合并完整训练与最终三域测试；调参筛选阶段使用 `train`，避免反复查看测试结果选方案。
 
+## 直接选择实验、epoch和seed
+
+在Kaggle Notebook单元格中可直接运行：
+
+```python
+!python -m skinmamba train --baseline --epoch 1 --seed 2026 --config configs/baseline_isic2018.yaml --data-root /kaggle/input/datasets/nero20260505/data-20260925 --run-dir /kaggle/working/runs/isic2018_baseline_s2026
+
+!python -m skinmamba train --main --epoch 250 --seed 2026 --config configs/baseline_isic2018.yaml --data-root /kaggle/input/datasets/nero20260505/data-20260925 --run-dir /kaggle/working/runs/isic2018_main_s2026
+
+!python -m skinmamba train --ablation sampling_only --epoch 250 --seed 2026 --config configs/baseline_isic2018.yaml --data-root /kaggle/input/datasets/nero20260505/data-20260925 --run-dir /kaggle/working/runs/isic2018_sampling_only_s2026
+```
+
+以上三个实验选择互斥；不传选择参数时沿用YAML中的模型。`--main`（别名`--main-experiment`）对应当前的几何间距校准主实验原型，尚未证明优于baseline。`--ablation`支持：
+
+| 名称 | 实验 |
+|---|---|
+| unfused_control | 相同网格的非融合执行路径对照 |
+| sampling_only | 仅采样，间距因子为1 |
+| constant_scale | 采样加固定平均间距 |
+| geometry | 采样加实际间距，与当前主实验相同 |
+| uniform_identity | 全网格均匀采样一致性对照 |
+| no_bridge | baseline移除bridge |
+| wider | baseline扩大通道 |
+| bce_only / dice_only | baseline只用一种损失 |
+
+`--epoch`与`--epochs`等价，表示**总训练轮数**；`--seed`指定随机种子。配置优先级为：YAML → 实验选择 → `--set`高级覆盖 → `--epoch`/`--seed`/`--data-root`。实验开关只覆盖其对应的模型/消融字段，保留数据来源及其余训练设置；建议用`baseline_isic2017.yaml`或`baseline_isic2018.yaml`作为共同起点。
+
+`--epoch`不会自动改学习率调度周期；需要时加`--set training.t_max=250`，同组实验保持一致。运行目录名只是标签，实际种子以`--seed`和保存的`config.yaml`为准。将命令中的`train`改成`run`，会在设定轮数结束后自动评估三个完整测试集。
+
 切换 ISIC2017 使用 `configs/baseline_isic2017.yaml`。切换候选机制使用 `configs/ablations/geometry.yaml`。任意字段可以 `--set key=value` 覆盖，例如 `--set seed=43`、`--set model.sample_ratio=0.5`。默认沿用作者 batch=8、FP32；T4 若显存不足，可将**同一比较组全部**改为 batch=4，不自动改变批量。
 
 断点续训（保持原配置、250 epoch 计划及数据内容不变）：
@@ -79,13 +108,13 @@ python -m skinmamba train --config configs/baseline_isic2018.yaml --data-root /k
 
 ```bash
 # 默认只打印命令；加 --execute 真正串行训练，不同时占用T4。
-python scripts/run_matrix.py --data-root /kaggle/input/your-data/data --output-root /kaggle/working/runs --sources isic2018 --seeds 42
+python scripts/run_matrix.py --data-root /kaggle/input/your-data/data --output-root /kaggle/working/runs --sources isic2018 --epoch 50 --seeds 2026
 # 最终冻结配置后，两个来源、三个种子、指定方法训练+最终测试：
 python scripts/run_matrix.py --data-root /kaggle/input/your-data/data --output-root /kaggle/working/runs --sources isic2017 isic2018 --seeds 42 43 44 --variants baseline geometry --execute --evaluate
 python -m skinmamba aggregate --root /kaggle/working/runs --output /kaggle/working/runs/aggregate.csv
 ```
 
-短筛选可统一加 `--set training.epochs=50 --set training.t_max=50`；它是探索协议，不能和250 epoch正式结果混在同一比较表。不要先跑全部组合，先验证主机制是否有稳定收益。
+短筛选可统一加 `--epoch 50 --set training.t_max=50`；它是探索协议，不能和250 epoch正式结果混在同一比较表。不要先跑全部组合，先验证主机制是否有稳定收益。矩阵脚本支持`--variants baseline main sampling_only constant_scale`和自选`--seeds`列表。
 
 ## 公共指标口径
 
@@ -108,7 +137,7 @@ FLOPs 不是硬件指令数，不包括norm/通用激活/采样/插值等；`flo
 
 HD95：两张空mask→0，只有一张为空→∞；主字段 `hd95` 是有限样本均值，**必须同时报告** `hd95_finite_count`、`hd95_failed_count`；`hd95_strict` 保留一例失败即∞的严格均值，不能隐藏失败。IoU/Dice类别双方为空视作完全匹配。测试集存在1张全前景标注，specificity不存在背景时的约定已明确。
 
-额外提供 p50/p95 延迟、CUDA峰值显存、逐图结果及三种子均值/样本标准差。分辨率、精度、threshold=0.5和batch=1在速度比较中保持一致；全量/排重子集不混合。
+额外提供 p50/p95 延迟、CUDA峰值显存、逐图结果及多种子均值/样本标准差。分辨率、精度、threshold=0.5和batch=1在速度比较中保持一致；聚合仅使用full结果，读取旧版结果时自动忽略clean行。
 
 外部模型也可使用：
 
