@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: B3_bce_only
+loss:
+  dice_weight: 0.0

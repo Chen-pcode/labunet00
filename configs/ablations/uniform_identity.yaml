@@ -1,0 +1,6 @@
+extends: ../base.yaml
+name: A5_uniform_identity
+model:
+  variant: sampled_geometry
+  sample_ratio: 1.0
+  sampling_power: 1.0

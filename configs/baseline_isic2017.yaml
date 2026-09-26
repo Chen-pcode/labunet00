@@ -1,0 +1,4 @@
+extends: base.yaml
+name: baseline_isic2017
+data:
+  source: isic2017

@@ -1,0 +1,9 @@
+# Keep Kaggle's preinstalled CUDA torch; GPU extensions are installed separately.
+numpy>=1.24
+scipy>=1.10
+Pillow>=10
+PyYAML>=6
+einops>=0.7
+packaging>=23
+ninja>=1.11
+pytest>=8

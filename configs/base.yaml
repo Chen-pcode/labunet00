@@ -1,0 +1,45 @@
+name: ultralight_baseline
+seed: 42
+data:
+  root: ../data
+  source: isic2018
+  image_size: 256
+  normalization: official_minmax255
+  augmentation: official
+  validation_overlap_policy: exclude
+model:
+  backend: cuda
+  variant: baseline
+  channels: [8, 16, 24, 32, 48, 64]
+  groups: 4
+  bridge: true
+  split_att: fc
+  d_state: 16
+  d_conv: 4
+  expand: 2
+  geometry_stage: encoder4
+  sample_ratio: 0.75
+  sampling_power: 1.5
+training:
+  epochs: 250
+  batch_size: 8
+  workers: 2
+  precision: fp32
+  lr: 0.001
+  weight_decay: 0.01
+  t_max: 50
+  eta_min: 0.00001
+  selection: val_loss
+  grad_clip: 0.0
+  strict_determinism: false
+  log_interval: 20
+loss:
+  bce_weight: 1.0
+  dice_weight: 1.0
+  smooth: 1.0
+evaluation:
+  threshold: 0.5
+  batch_size: 8
+profiling:
+  warmup: 30
+  iterations: 100

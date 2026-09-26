@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: B4_dice_only
+loss:
+  bce_weight: 0.0

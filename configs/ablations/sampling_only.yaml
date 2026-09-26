@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: A2_sampling_only
+model:
+  variant: sampled_index

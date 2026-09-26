@@ -1,0 +1,13 @@
+extends: base.yaml
+name: smoke_cpu
+data:
+  image_size: 32
+model:
+  backend: reference
+training:
+  epochs: 2
+  batch_size: 2
+  workers: 0
+profiling:
+  warmup: 1
+  iterations: 3

@@ -1,0 +1,4 @@
+* text=auto eol=lf
+# Preserve the exact upstream files used by SOURCE_PROVENANCE.json.
+third_party/UltraLight_VM_UNet.original.py -text -whitespace
+third_party/UltraLight-VM-UNet.LICENSE -text

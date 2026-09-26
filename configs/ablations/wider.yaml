@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: B2_wider
+model:
+  channels: [12, 24, 36, 48, 72, 96]

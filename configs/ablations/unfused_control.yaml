@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: A1_unfused_control
+model:
+  variant: unfused_control

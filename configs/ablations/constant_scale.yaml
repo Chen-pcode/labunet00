@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: A3_constant_scale
+model:
+  variant: sampled_constant

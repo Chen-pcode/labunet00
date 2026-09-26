@@ -1,0 +1,41 @@
+{
+  "source": "user-downloaded official project",
+  "repository": "https://github.com/wurenkai/UltraLight-VM-UNet",
+  "doi": "10.1016/j.patter.2025.101298",
+  "source_commit": "not available in downloaded archive; local hashes identify audited files",
+  "files": [
+    {
+      "file": "models/UltraLight_VM_UNet.py",
+      "sha256": "202a834955b08efd046b053e384a21431cf19d0b9422a81ae4356f895bcd0ea0"
+    },
+    {
+      "file": "configs/config_setting.py",
+      "sha256": "437869833ff82de1a5b683218c62e6a2a7541e09a9ced49252b942afe2cda60f"
+    },
+    {
+      "file": "loader.py",
+      "sha256": "6342b5f131d6f27d339d09bc066f4fbf3e7c5ace16320c0bf8f22d1335a9eb8b"
+    },
+    {
+      "file": "engine.py",
+      "sha256": "47cbdc28c19915e5efc077c1efb0385235bbf86b973e03d70168f9c30e7d48af"
+    },
+    {
+      "file": "utils.py",
+      "sha256": "dc06e383299b68152db913660f4959197e81a45d908f0ecff68bcb4e9141d943"
+    },
+    {
+      "file": "LICENSE",
+      "sha256": "3a615dd11bc62c96d8c677b77bacd99e7087694ab8dc1585ac02b11e4e7af059"
+    },
+    {
+      "file": "README.md",
+      "sha256": "c7715dd40c8b52b5edf4b1b793ea6e9caa9188d645dd12e09563ba1404ef6e61"
+    }
+  ],
+  "reference_implementations": [
+    "https://github.com/state-spaces/mamba/blob/main/mamba_ssm/modules/mamba_simple.py",
+    "https://github.com/state-spaces/mamba/blob/main/mamba_ssm/ops/selective_scan_interface.py"
+  ],
+  "changes": "See REFERENCES_MODEL.md and README.md for output/logit API, image loader, fixed splits, overlap handling and experiment hypotheses."
+}
