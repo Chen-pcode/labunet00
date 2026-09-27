@@ -1,0 +1,53 @@
+{
+  "purpose": "Unmodified author source snapshots; runtime adaptations are in skinmamba/models/reconstruction.py",
+  "files": [
+    {
+      "project": "EfficientViM",
+      "repository": "https://github.com/mlvlab/EfficientViM.git",
+      "commit": "304340cb9c339b61669250d058525c9cdadd5e93",
+      "upstream_path": "classification/models/EfficientViM.py",
+      "vendored_path": "third_party/EfficientViM/EfficientViM.original.py",
+      "sha256": "c8f1830473b0d6d410fc9345840ea963720964c04a35ee1290fb462772382444"
+    },
+    {
+      "project": "EfficientViM",
+      "repository": "https://github.com/mlvlab/EfficientViM.git",
+      "commit": "304340cb9c339b61669250d058525c9cdadd5e93",
+      "upstream_path": "classification/models/utils.py",
+      "vendored_path": "third_party/EfficientViM/utils.original.py",
+      "sha256": "367c4d7d308d1c5981dd91d95c51110944547ef0c2edf5259df19c942f1546ce"
+    },
+    {
+      "project": "EfficientViM",
+      "repository": "https://github.com/mlvlab/EfficientViM.git",
+      "commit": "304340cb9c339b61669250d058525c9cdadd5e93",
+      "upstream_path": "LICENSE",
+      "vendored_path": "third_party/EfficientViM/LICENSE",
+      "sha256": "42f1ef5d2c4966cf9fbda166d30852454b528f19b8c360fa437bdf3fdd889bad"
+    },
+    {
+      "project": "UPLiFT",
+      "repository": "https://github.com/mwalmer-umd/UPLiFT.git",
+      "commit": "e58d213d79c125d5cceaa7af0fefb6a94677bf55",
+      "upstream_path": "uplift/uplift.py",
+      "vendored_path": "third_party/UPLiFT/uplift.original.py",
+      "sha256": "6cb3d88882cef428adad92e73bce0d6ad16af86f977a1a208f05b189f4a46a29"
+    },
+    {
+      "project": "UPLiFT",
+      "repository": "https://github.com/mwalmer-umd/UPLiFT.git",
+      "commit": "e58d213d79c125d5cceaa7af0fefb6a94677bf55",
+      "upstream_path": "LICENSE",
+      "vendored_path": "third_party/UPLiFT/LICENSE",
+      "sha256": "8e4452496f35440f612b0501ec04fdb18fdebfe97c053ace6ac93e6df24e7ca9"
+    },
+    {
+      "project": "UPLiFT",
+      "repository": "https://github.com/mwalmer-umd/UPLiFT.git",
+      "commit": "e58d213d79c125d5cceaa7af0fefb6a94677bf55",
+      "upstream_path": "licenses/LayerNorm_LICENSE.txt",
+      "vendored_path": "third_party/UPLiFT/LayerNorm_LICENSE.txt",
+      "sha256": "da6d3703ed11cbe42bd212c725957c98da23cbff1998c05fa4b3d976d1a58e93"
+    }
+  ]
+}

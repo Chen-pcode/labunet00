@@ -108,7 +108,8 @@ def evaluate_checkpoint(checkpoint_path, data_root=None, output_dir=None, device
     report = {"checkpoint": str(Path(checkpoint_path).resolve()), "checkpoint_sha256": file_sha256(checkpoint_path),
         "selected_epoch": checkpoint["epoch"] + 1, "config": config, "environment": environment(),
         "profile": complexity, "audit": audit, "results": results,
-        "sampling": model.sampling_report() if hasattr(model, "sampling_report") else None}
+        "sampling": model.sampling_report() if hasattr(model, "sampling_report") else None,
+        "model_family": config["model"].get("family", "ultralight")}
     write_json(output_dir / "results.json", report)
     write_csv(output_dir / "summary.csv", results)
     return report

@@ -1,4 +1,4 @@
-extends: baseline_isic2017.yaml
-name: cclas_isic2017
-model:
-  variant: cclas
+extends: reconstruction_base.yaml
+name: reconstruction_isic2017
+data:
+  source: isic2017

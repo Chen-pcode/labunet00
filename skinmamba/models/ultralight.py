@@ -221,7 +221,7 @@ class UltraLight_VM_UNet(nn.Module):
                  variant="baseline", sample_ratio=1.0, sampling_power=1.5,
                  geometry_stage="encoder4", d_state=16, d_conv=4, expand=2,
                  adaptive_lambda=0.75, coverage_min_factor=0.25,
-                 coverage_max_factor=2.5, delta_min=0.5, delta_max=1.5):
+                 coverage_max_factor=2.5, delta_min=0.5, delta_max=1.5, pvm_factory=None):
         super().__init__()
         c_list = list(c_list or [8, 16, 24, 32, 48, 64])
         if groups <= 0 or d_state <= 0 or d_conv <= 0 or expand <= 0:
@@ -247,6 +247,8 @@ class UltraLight_VM_UNet(nn.Module):
         self.geometry_stage = geometry_stage
 
         def pvm(input_dim, output_dim, stage):
+            if pvm_factory is not None:
+                return pvm_factory(input_dim, output_dim, stage)
             return PVMLayer(input_dim, output_dim, d_state, d_conv, expand, groups, backend,
                             variant if stage == geometry_stage else "baseline",
                             sample_ratio, sampling_power, adaptive_lambda,

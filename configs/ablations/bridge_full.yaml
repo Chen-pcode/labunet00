@@ -1,0 +1,13 @@
+extends: ../reconstruction_base.yaml
+name: bridge_full
+model:
+  family: reconstruction
+  state_dim: 16
+  core_local: difference
+  spatial_bridge: guided
+  channel_bridge: cross
+  bridge_input: full
+  bridge_local: true
+  residual_init: 0.1
+  channel_reduction: 1
+  variant: bridge_full

@@ -73,7 +73,7 @@ python -m skinmamba evaluate --checkpoint /kaggle/working/runs/isic2018_baseline
 !python -m skinmamba train --ablation sampling_only --epoch 250 --seed 2026 --config configs/baseline_isic2018.yaml --data-root /kaggle/input/datasets/nero20260505/data-20260925 --run-dir /kaggle/working/runs/isic2018_sampling_only_s2026
 ```
 
-以上三个实验选择互斥；不传选择参数时沿用YAML中的模型。`--main`（别名`--main-experiment`）现在选择 CCLAS 自适应采样原型，旧几何方案保留为 `--ablation geometry`。新方案尚未经过正式 T4 实验验证。`--ablation`支持：
+以上三个实验选择互斥；不传选择参数时沿用YAML中的模型。`--main`（别名`--main-experiment`）现在选择 reconstruction 主方案：HSM-SSD 状态读回差异补偿、引导式空间重建和条件通道交互。旧 CCLAS 自适应采样原型保留为 `--ablation cclas`，旧几何方案保留为 `--ablation geometry`。新方案仍需在 Kaggle 上完成正式精度和速度实验。`--ablation`支持：
 
 | 名称 | 实验 |
 |---|---|
@@ -85,7 +85,9 @@ python -m skinmamba evaluate --checkpoint /kaggle/working/runs/isic2018_baseline
 | adaptive_sampling | 学习式自适应采样、无覆盖约束、无几何步长 |
 | adaptive_geometry | 自适应采样加原始几何步长 |
 | adaptive_coverage | 自适应采样加覆盖约束、原始几何步长 |
-| cclas | 自适应采样、覆盖约束、有界几何步长，与 `--main` 相同 |
+| cclas | 旧的自适应采样、覆盖约束、有界几何步长原型 |
+| hsm_only / hsm_local / readback | HSM-SSD 迁移、完整特征局部补偿、状态读回差异补偿 |
+| readback_spatial / readback_channel / reconstruction | 逐步加入空间重建、条件通道交互和完整主方案 |
 | uniform_identity | 全网格均匀采样一致性对照 |
 | no_bridge | baseline移除bridge |
 | wider | baseline扩大通道 |
@@ -97,7 +99,7 @@ python -m skinmamba evaluate --checkpoint /kaggle/working/runs/isic2018_baseline
 
 切换 ISIC2017 使用 `configs/baseline_isic2017.yaml`。新主方法也可直接用 `configs/main_isic2017.yaml` 或 `configs/main_isic2018.yaml`。任意字段可以 `--set key=value` 覆盖，例如 `--set seed=43`、`--set model.sample_ratio=0.5`。默认沿用作者 batch=8、FP32；T4 若显存不足，可将**同一比较组全部**改为 batch=4，不自动改变批量。
 
-断点续训（保持原配置、250 epoch 计划及数据内容不变）：
+断点续训（保持对应 YAML 的总 epoch 计划及数据内容不变）：
 
 ```bash
 python -m skinmamba train --config configs/baseline_isic2018.yaml --data-root /kaggle/input/your-data/data --run-dir /kaggle/working/runs/isic2018_baseline_s42 --resume /kaggle/working/runs/isic2018_baseline_s42/last.pt
@@ -107,7 +109,7 @@ python -m skinmamba train --config configs/baseline_isic2018.yaml --data-root /k
 
 ## 实验设计
 
-详细设计见 [CCLAS_EXPERIMENTS.md](CCLAS_EXPERIMENTS.md)。先做验证集短筛选，再冻结方案，使用 42/43/44 三个种子做正式实验。默认250 epoch、AdamW(lr=0.001, wd=0.01)、CosineAnnealingLR(T_max=50, eta_min=1e-5)、BCE+Dice，与下载的官方配置对应。T_max=50 在250 epoch中会再次上升，**不是单次250 epoch衰减**，这里保留原设置。
+详细设计见 [RECONSTRUCTION_EXPERIMENTS.md](RECONSTRUCTION_EXPERIMENTS.md)。先运行 `baseline → hsm_only → hsm_local → readback` 短筛选，再决定是否运行空间/通道组合，最后使用 42/43/44 三个种子做正式实验。新方案默认 300 epoch、AdamW(lr=0.001, wd=0.01)、CosineAnnealingLR(T_max=50, eta_min=1e-5)、BCE+Dice；所有对照必须保持相同 epoch、seed、输入尺寸和评估协议。
 
 图像采用作者等价的逐图 min-max 到0–255（全局z-score后再逐图min-max会抵消）；增强保持两个独立50%概率的 rot90+flip、20–79度最近邻旋转。验证损失改用样本加权平均，二值掩码读取方式、固定用户划分和排重协议也与作者npy准备流程有差别，因此不能直接声称复现了论文表格数值。
 
@@ -119,7 +121,7 @@ python scripts/run_matrix.py --data-root /kaggle/input/your-data/data --output-r
 python -m skinmamba aggregate --root /kaggle/working/runs --output /kaggle/working/runs/aggregate.csv
 ```
 
-短筛选统一使用 [CCLAS_EXPERIMENTS.md](CCLAS_EXPERIMENTS.md) 中的 80 epoch 协议；它是探索实验，不能和250 epoch正式结果混在同一比较表。矩阵脚本支持新旧所有 `configs/ablations/` 中的名称、`main` 和自选 `--seeds` 列表。
+短筛选建议使用 30--80 epoch 的统一协议；它是探索实验，不能和正式 300 epoch 结果混在同一比较表。矩阵脚本支持 `RECONSTRUCTION_EXPERIMENTS.md` 中的新旧所有 `configs/ablations/` 名称、`main` 和自选 `--seeds` 列表。
 
 ## 公共指标口径
 
@@ -161,4 +163,4 @@ cost = profile_model(model, input_shape=(1, 3, 256, 256), device="cuda", precisi
 
 本地验证命令：`python -m pytest -q`。CUDA reference 数值对照在无GPU环境跳过；Kaggle 用 `scripts/verify_cuda.py` 强制执行实际GPU检查。CPU reference只用于小尺寸正确性测试，不适合256²完整训练，也不能代表T4速度。已执行验证结果见 [VERIFICATION.md](VERIFICATION.md)。
 
-来源及机制边界见 [REFERENCES_MODEL.md](REFERENCES_MODEL.md)、[SOURCE_PROVENANCE.json](SOURCE_PROVENANCE.json)。CCLAS 是待验证原型，不是Serp-Mamba复现，不宣称严格旋转/尺度等变或已确认论文创新。
+来源及机制边界见 [REFERENCES_MODEL.md](REFERENCES_MODEL.md)、[SOURCE_PROVENANCE.json](SOURCE_PROVENANCE.json)。reconstruction 是基于公开模块迁移形成的待验证研究方案，不是 Serp-Mamba 复现，也不宣称严格旋转/尺度等变或已确认论文创新。

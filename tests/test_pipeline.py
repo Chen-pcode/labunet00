@@ -140,8 +140,8 @@ def test_aggregation_separates_data_threshold_and_hardware(tmp_path):
 
 
 @pytest.mark.parametrize("flag,variant", [
-    (["--baseline"], "baseline"), (["--main"], "cclas"),
-    (["--main-experiment"], "cclas"),
+    (["--baseline"], "baseline"), (["--main"], "reconstruction"),
+    (["--main-experiment"], "reconstruction"),
     (["--ablation", "sampling_only"], "sampled_index"),
     (["--ablation", "constant_scale"], "sampled_constant"),
     (["--ablation", "uniform_sampling"], "sampled_index"),
@@ -199,7 +199,7 @@ def test_cli_runs_cclas_and_profiles_one_epoch(fixture_data, tmp_path):
     torch.set_num_threads(1)
     config_path = Path(__file__).resolve().parents[1] / "configs/smoke_cpu.yaml"
     run_dir = tmp_path / "cclas_one_epoch"
-    main(["run", "--main", "--epoch", "1", "--seed", "2026", "--config", str(config_path),
+    main(["run", "--ablation", "cclas", "--epoch", "1", "--seed", "2026", "--config", str(config_path),
           "--data-root", str(fixture_data), "--run-dir", str(run_dir), "--device", "cpu",
           "--set", "model.d_state=2"])
     checkpoint = load_checkpoint(run_dir / "best.pt")
@@ -210,3 +210,26 @@ def test_cli_runs_cclas_and_profiles_one_epoch(fixture_data, tmp_path):
     assert report["profile"]["flops"] is not None
     assert any("score_head" in key for key in checkpoint["model"])
     assert report["profile"]["params"] > 0
+
+
+@pytest.mark.parametrize("source", ["isic2017", "isic2018"])
+def test_reconstruction_resume_and_full_evaluation(fixture_data, tmp_path, source):
+    from skinmamba.config import select_experiment
+    torch.set_num_threads(1)
+    config = select_experiment(load_config(Path(__file__).resolve().parents[1] / "configs/smoke_cpu.yaml"), experiment="main")
+    config["data"].update(root=str(fixture_data), source=source)
+    config["model"]["state_dim"] = 4
+    continuous, resumed = tmp_path / "continuous", tmp_path / "resumed"
+    train(config, continuous, device="cpu")
+    train(config, resumed, device="cpu", stop_after_epoch=1)
+    train(config, resumed, device="cpu", resume=resumed / "last.pt")
+    one, two = load_checkpoint(continuous / "last.pt"), load_checkpoint(resumed / "last.pt")
+    for key in one["model"]:
+        torch.testing.assert_close(one["model"][key], two["model"][key], rtol=0, atol=0)
+    report = evaluate_checkpoint(resumed / "best.pt", device="cpu", profile_iterations=1, save_predictions=True)
+    assert {r["target"] for r in report["results"]} == {source, "ph2"}
+    assert report["model_family"] == "reconstruction"
+    assert report["profile"]["flops"] > 0
+    assert report["profile"]["flops_unsupported"] == []
+    assert report["sampling"] is None
+    assert len(list((resumed / "evaluation/predictions").rglob("*.png"))) == 4

@@ -28,7 +28,8 @@ from torch import nn
 
 _FLOP_SCOPE = (
     "Core arithmetic estimate per input batch; Conv/Linear use 2 FLOPs/MAC; "
-    "includes Mamba-1 projections, depthwise convolution and selective scan. "
+    "includes Mamba-1 selective scan, HSM-SSD state matrix products, "
+    "channel attention matrix products and LocalAttender weighted aggregation. "
     "Excludes normalization, general activations/elementwise operations, "
     "interpolation/grid sampling, reductions outside the scan, and memory movement."
 )
@@ -90,7 +91,16 @@ def _count_core_flops(model: nn.Module, inputs: torch.Tensor) -> dict[str, Any]:
     standards = [(name, module) for name, module in named if id(module) not in owned and _is_standard_mamba(module)]
     for _, core in standards:
         owned.update(id(child) for child in core.modules() if child is not core)
-    recognized_core_ids = {id(module) for _, module in wrappers + standards}
+    extras = [(name, module) for name, module in named
+              if callable(getattr(module, "profiling_extra_flops", None))]
+    recognized_core_ids = {id(module) for _, module in wrappers + standards + extras}
+
+    def extra_hook(module, args, output):
+        # Functional arithmetic only. Child Conv/Linear hooks remain active.
+        extra = module.profiling_extra_flops(args, output)
+        if any(not isinstance(value, int) or value < 0 for value in extra.values()):
+            raise ValueError("profiling_extra_flops must return nonnegative integer counts")
+        counts.update(extra)
 
     def wrapper_hook(module, args, output):
         spec = module.profiling_scan_spec(args, output)
@@ -135,6 +145,8 @@ def _count_core_flops(model: nn.Module, inputs: torch.Tensor) -> dict[str, Any]:
             label = f"{name or '<root>'}: {type(module).__name__}"
             if id(module) in owned:
                 continue
+            if callable(getattr(module, "profiling_extra_flops", None)):
+                handles.append(module.register_forward_hook(extra_hook))
             if callable(getattr(module, "profiling_scan_spec", None)):
                 handles.append(module.register_forward_hook(wrapper_hook))
             elif _is_standard_mamba(module):
@@ -147,7 +159,7 @@ def _count_core_flops(model: nn.Module, inputs: torch.Tensor) -> dict[str, Any]:
                 omitted.add(label)
             elif isinstance(module, zero_cost):
                 continue
-            elif not list(module.children()):
+            elif not list(module.children()) and not getattr(module, "profiling_container_only", False):
                 unsupported.add(label)
             elif any(word in type(module).__name__.lower() for word in ("mamba", "selectivescan", "ssm")):
                 if not any(id(child) in recognized_core_ids for child in module.modules()):

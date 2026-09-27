@@ -15,6 +15,8 @@ from skinmamba.evaluation import evaluate_model
 from skinmamba.losses import BCEDiceLoss
 from skinmamba.models import build_model
 from skinmamba.utils import seed_everything, write_json, environment
+from skinmamba.config import select_experiment
+from skinmamba.experiments import RECONSTRUCTION_PRESETS
 
 
 def main():
@@ -22,21 +24,26 @@ def main():
     parser.add_argument("--data-root", default="../data")
     parser.add_argument("--manifest")
     parser.add_argument("--output", default="reports/real_data_smoke.json")
+    parser.add_argument("--variants", nargs="+", default=["baseline", "readback", "reconstruction"],
+                        choices=["baseline", *RECONSTRUCTION_PRESETS])
+    parser.add_argument("--sources", nargs="+", default=["isic2017", "isic2018"], choices=["isic2017", "isic2018"])
+    parser.add_argument("--image-size", type=int, default=64)
     args = parser.parse_args()
     torch.set_num_threads(1)
     manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8")) if args.manifest else make_manifest(args.data_root)
     reports = []
-    for source in ("isic2017", "isic2018"):
+    for source in args.sources:
         audit = audit_manifest(manifest, source)
-        for variant in ("baseline", "unfused_control", "sampled_index", "sampled_constant", "sampled_geometry"):
+        for variant in args.variants:
             seed_everything(42)
-            config = load_config(ROOT / "configs/base.yaml", ["model.backend=reference", f"model.variant={variant}"])
+            config = load_config(ROOT / "configs/base.yaml", ["model.backend=reference", f"data.source={source}", f"data.image_size={args.image_size}"])
+            config = select_experiment(config, experiment="baseline") if variant == "baseline" else select_experiment(config, ablation=variant)
             model = build_model(config)
             criterion = BCEDiceLoss()
             optimizer = torch.optim.AdamW(model.parameters(), lr=.001)
             def loader(domain, split, exclude=()):
                 records = [r for r in manifest["records"] if r["domain"] == domain and r["split"] == split and r["id"] not in exclude][:2]
-                ds = SkinDataset(args.data_root, records, 64, augmentation="official" if split == "train" else "none")
+                ds = SkinDataset(args.data_root, records, args.image_size, augmentation="official" if split == "train" else "none")
                 return make_loader(ds, 2)
             batch = next(iter(loader(source, "train")))
             loss = criterion(model(batch["image"]), batch["mask"])
@@ -47,14 +54,14 @@ def main():
             scores = validate(model, loader(source, "val", audit["source_train_val_overlap"]), criterion, torch.device("cpu"), "fp32", .5)
             assert all(torch.isfinite(torch.tensor(v)) for v in scores.values())
             domains = {}
-            for domain in ("isic2017", "isic2018", "ph2"):
+            for domain in (source, "ph2"):
                 rows, metrics = evaluate_model(model, loader(domain, "test"), device="cpu")
                 assert len(rows) == 2 and 0 <= metrics["dice"] <= 1
                 domains[domain] = {"images_checked": len(rows), "metric_schema_valid": True}
-            reports.append({"source": source, "variant": variant, "image_size": 64,
+            reports.append({"source": source, "variant": variant, "image_size": args.image_size,
                             "train_images": 2, "validation_images": 2, "finite_loss_and_gradients": True,
                             "test_domains": domains, "sampling": model.sampling_report()})
-            print(f"passed {source}/{variant}: train backward + source validation + three test loaders", flush=True)
+            print(f"passed {source}/{variant}: train backward + source validation + source/PH2 test loaders", flush=True)
     write_json(args.output, {"purpose": "One-step software integration using 2 real files per split; not accuracy or speed results",
                             "environment": environment(), "checks": reports, "status": "passed"})
 

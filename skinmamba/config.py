@@ -3,13 +3,14 @@ from __future__ import annotations
 import copy
 from pathlib import Path
 import yaml
+from .experiments import RECONSTRUCTION_DEFAULTS, RECONSTRUCTION_PRESETS, reconstruction_options
 
 ABLATIONS = (
     "unfused_control", "sampling_only", "constant_scale", "geometry",
     "uniform_identity", "no_bridge", "wider", "bce_only", "dice_only",
     "uniform_sampling", "adaptive_sampling", "adaptive_geometry",
     "adaptive_coverage", "cclas",
-)
+) + tuple(RECONSTRUCTION_PRESETS)
 
 
 def merge(base, update):
@@ -55,13 +56,20 @@ def select_experiment(config, experiment=None, ablation=None):
         return copy.deepcopy(config)
     if ablation is not None and ablation not in ABLATIONS:
         raise ValueError(f"Unknown ablation: {ablation}")
-    name = ablation or ("cclas" if experiment == "main" else "baseline")
+    name = ablation or ("reconstruction" if experiment == "main" else "baseline")
+    if name in RECONSTRUCTION_PRESETS:
+        return merge(config, {"name": name, "model": reconstruction_options(name)})
+    config = copy.deepcopy(config)
+    # Do not let irrelevant new-family settings split baseline aggregation into
+    # separate groups depending on which YAML the user selected it from.
+    for key in RECONSTRUCTION_DEFAULTS:
+        config["model"].pop(key, None)
     variant = {"geometry": "sampled_geometry", "sampling_only": "sampled_index",
                "constant_scale": "sampled_constant", "uniform_identity": "sampled_geometry",
                "unfused_control": "unfused_control", "uniform_sampling": "sampled_index",
                "adaptive_sampling": "adaptive_index", "adaptive_geometry": "adaptive_geometry",
                "adaptive_coverage": "adaptive_coverage", "cclas": "cclas"}.get(name, "baseline")
-    patch = {"name": experiment or f"ablation_{name}", "model": {"variant": variant}}
+    patch = {"name": experiment or f"ablation_{name}", "model": {"family": "ultralight", "variant": variant}}
     if name == "uniform_identity":
         patch["model"].update(sample_ratio=1.0, sampling_power=1.0)
     elif name == "uniform_sampling":

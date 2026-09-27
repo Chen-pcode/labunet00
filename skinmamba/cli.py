@@ -66,13 +66,13 @@ def main(argv=None):
     parser = argparse.ArgumentParser(description="Skin Mamba reproducible experiment commands")
     sub = parser.add_subparsers(dest="command", required=True)
     for name in ("train", "run"):
-        p = sub.add_parser(name, help="run=train then evaluate best on all 3 test domains")
+        p = sub.add_parser(name, help="run=train then evaluate source and PH2 test sets")
         p.add_argument("--config", default="configs/baseline_isic2018.yaml")
         choice = p.add_mutually_exclusive_group()
         choice.add_argument("--baseline", dest="experiment", action="store_const", const="baseline",
                             help="Select the original baseline variant")
         choice.add_argument("--main", "--main-experiment", dest="experiment", action="store_const", const="main",
-                            help="Select the main experiment: coverage-constrained lesion-adaptive sampling")
+                            help="Select reconstruction: state readback + guided spatial/channel bridges; old main: --ablation cclas")
         choice.add_argument("--ablation", choices=ABLATIONS, help="Select one named ablation")
         p.add_argument("--epoch", "--epochs", dest="epochs", type=positive_int,
                        help="Total training epochs (not extra epochs when resuming)")

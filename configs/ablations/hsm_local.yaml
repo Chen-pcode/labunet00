@@ -1,0 +1,13 @@
+extends: ../reconstruction_base.yaml
+name: hsm_local
+model:
+  family: reconstruction
+  state_dim: 16
+  core_local: full
+  spatial_bridge: legacy
+  channel_bridge: legacy
+  bridge_input: difference
+  bridge_local: true
+  residual_init: 0.1
+  channel_reduction: 1
+  variant: hsm_local

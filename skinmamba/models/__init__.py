@@ -4,6 +4,12 @@ from .ultralight import UltraLight_VM_UNet
 
 def build_model(config: dict):
     options = config.get("model", config)
+    family = options.get("family", "ultralight")
+    if family == "reconstruction":
+        from .reconstruction import ReconstructionUNet
+        return ReconstructionUNet(options)
+    if family != "ultralight":
+        raise ValueError(f"Unknown model.family: {family}")
     return UltraLight_VM_UNet(
         num_classes=options.get("num_classes", 1),
         input_channels=options.get("input_channels", 3),
