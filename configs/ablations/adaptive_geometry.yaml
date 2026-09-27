@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: adaptive_geometry
+model:
+  variant: adaptive_geometry

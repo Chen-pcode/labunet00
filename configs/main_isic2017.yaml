@@ -1,0 +1,4 @@
+extends: baseline_isic2017.yaml
+name: cclas_isic2017
+model:
+  variant: cclas

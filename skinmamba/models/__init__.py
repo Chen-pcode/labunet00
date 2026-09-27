@@ -17,6 +17,11 @@ def build_model(config: dict):
         geometry_stage=options.get("geometry_stage", "encoder4"),
         d_state=options.get("d_state", 16), d_conv=options.get("d_conv", 4),
         expand=options.get("expand", 2),
+        adaptive_lambda=options.get("adaptive_lambda", 0.75),
+        coverage_min_factor=options.get("coverage_min_factor", 0.25),
+        coverage_max_factor=options.get("coverage_max_factor", 2.5),
+        delta_min=options.get("delta_min", 0.5),
+        delta_max=options.get("delta_max", 1.5),
     )
 
 

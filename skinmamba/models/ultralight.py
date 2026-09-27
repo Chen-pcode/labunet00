@@ -12,13 +12,20 @@ from torch import nn
 from torch.nn import functional as F
 
 from .mamba import create_mamba, mamba_forward
-from .sampling import make_sampling_plan, restore_features, sample_features
+from .sampling import (make_sampling_plan, restore_features, sample_features,
+                       make_adaptive_sampling_plan, sample_adaptive_features,
+                       restore_adaptive_features)
+
+
+ADAPTIVE_VARIANTS = {"adaptive_index", "adaptive_geometry", "adaptive_coverage", "cclas"}
 
 
 class PVMLayer(nn.Module):
     def __init__(self, input_dim, output_dim, d_state=16, d_conv=4, expand=2,
                  groups=4, backend="cuda", variant="baseline", sample_ratio=1.0,
-                 sampling_power=1.5):
+                 sampling_power=1.5, adaptive_lambda=0.75,
+                 coverage_min_factor=0.25, coverage_max_factor=2.5,
+                 delta_min=0.5, delta_max=1.5):
         super().__init__()
         if input_dim % groups:
             raise ValueError("PVM input channels must be divisible by groups.")
@@ -33,6 +40,16 @@ class PVMLayer(nn.Module):
         self.variant = variant
         self.sample_ratio = sample_ratio
         self.sampling_power = sampling_power
+        self.adaptive_lambda = adaptive_lambda
+        self.coverage_min_factor = coverage_min_factor
+        self.coverage_max_factor = coverage_max_factor
+        self.delta_min = delta_min
+        self.delta_max = delta_max
+        if variant in ADAPTIVE_VARIANTS:
+            self.score_head = nn.Sequential(
+                nn.Conv2d(input_dim, input_dim, 3, padding=1, groups=input_dim),
+                nn.GELU(), nn.Conv2d(input_dim, 1, 1), nn.Sigmoid(),
+            )
         self._sampling_plans = {}
         self._last_plan = None
 
@@ -49,7 +66,12 @@ class PVMLayer(nn.Module):
         if self._last_plan is None:
             return None
         plan = self._last_plan
-        steps = plan["geometry"].reshape(plan["height"], plan["sample_count"])[0, 1:]
+        if plan.get("adaptive"):
+            steps = plan["x"][..., 1:] - plan["x"][..., :-1]
+            sample_x = plan["x"][0, 0].detach().cpu().tolist()
+        else:
+            steps = plan["geometry"].reshape(plan["height"], plan["sample_count"])[0, 1:]
+            sample_x = plan["x"].detach().cpu().tolist()
         return {
             "variant": self.variant, "height": plan["height"], "width": plan["width"],
             "samples_per_row": plan["sample_count"],
@@ -60,7 +82,11 @@ class PVMLayer(nn.Module):
             "row_transition_delta_factor": 1.0, "initial_token_delta_factor": 1.0,
             "min_within_row_step": float(steps.min().detach().cpu()) if steps.numel() else None,
             "max_within_row_step": float(steps.max().detach().cpu()) if steps.numel() else None,
-            "sample_x": plan["x"].detach().cpu().tolist(),
+            "sample_x": sample_x,
+            "sample_x_scope": "first image, first row" if plan.get("adaptive") else "all rows",
+            "adaptive_lambda": self.adaptive_lambda if plan.get("adaptive") else None,
+            "coverage": self.variant in {"adaptive_coverage", "cclas"},
+            "bounded_delta": self.variant == "cclas",
         }
 
     def profiling_scan_spec(self, inputs, output=None):
@@ -77,7 +103,8 @@ class PVMLayer(nn.Module):
             "channels": self.mamba.d_inner, "state_size": self.mamba.d_state,
             "dt_rank": self.mamba.dt_rank, "groups": self.groups,
             "d_model": self.mamba.d_model, "d_conv": self.mamba.d_conv,
-            "delta_scaled": self.variant not in {"baseline", "unfused_control"},
+            "sampled": self.variant not in {"baseline", "unfused_control"},
+            "delta_scaled": self.variant not in {"baseline", "unfused_control", "sampled_index", "adaptive_index"},
         }
 
     def forward(self, x):
@@ -96,19 +123,38 @@ class PVMLayer(nn.Module):
             ]
             x_mamba = torch.cat(outputs, dim=2)
         else:
-            plan = self._plan(height, width, x.device)
             normalized_image = x_norm.transpose(1, 2).reshape(batch, channels, height, width)
-            sampled = sample_features(normalized_image, plan)
+            if self.variant in ADAPTIVE_VARIANTS:
+                count = min(width, max(2, round(width * self.sample_ratio)))
+                average = (width - 1) / (count - 1) if count > 1 else 1.0
+                plan = make_adaptive_sampling_plan(
+                    self.score_head(normalized_image), self.sample_ratio,
+                    adaptive_lambda=self.adaptive_lambda,
+                    coverage=self.variant in {"adaptive_coverage", "cclas"},
+                    min_spacing=self.coverage_min_factor * average,
+                    max_spacing=self.coverage_max_factor * average,
+                    delta_bounds=(self.delta_min, self.delta_max) if self.variant == "cclas" else None,
+                )
+                sampled = sample_adaptive_features(normalized_image, plan)
+                self._last_plan = {key: value.detach() if isinstance(value, torch.Tensor) else value
+                                   for key, value in plan.items()}
+            else:
+                plan = self._plan(height, width, x.device)
+                sampled = sample_features(normalized_image, plan)
             sequence = sampled.flatten(2).transpose(1, 2)
             factor_key = {"sampled_index": "index", "sampled_constant": "constant",
-                          "sampled_geometry": "geometry"}[self.variant]
-            # All three ablations use the same projections, sample coordinates and kernels.
-            outputs = [mamba_forward(self.mamba, part, plan[factor_key], self.backend)
+                          "sampled_geometry": "geometry", "adaptive_index": None,
+                          "adaptive_geometry": "geometry", "adaptive_coverage": "geometry",
+                          "cclas": "geometry"}[self.variant]
+            # All sampled variants reuse the same core projections and kernels.
+            factors = None if factor_key is None else plan[factor_key]
+            outputs = [mamba_forward(self.mamba, part, factors, self.backend)
                        for part in torch.chunk(sequence, self.groups, dim=2)]
             processed = torch.cat(outputs, dim=2).transpose(1, 2).reshape(
                 batch, channels, height, plan["sample_count"],
             )
-            restored = restore_features(processed, plan).flatten(2).transpose(1, 2)
+            restore = restore_adaptive_features if self.variant in ADAPTIVE_VARIANTS else restore_features
+            restored = restore(processed, plan).flatten(2).transpose(1, 2)
             # Keep the original full-grid residual; do not interpolate the skip path.
             x_mamba = restored + self.skip_scale * x_norm
         x_mamba = self.proj(self.norm(x_mamba))
@@ -173,20 +219,28 @@ class UltraLight_VM_UNet(nn.Module):
     def __init__(self, num_classes=1, input_channels=3, c_list=None,
                  split_att="fc", bridge=True, groups=4, backend="cuda",
                  variant="baseline", sample_ratio=1.0, sampling_power=1.5,
-                 geometry_stage="encoder4", d_state=16, d_conv=4, expand=2):
+                 geometry_stage="encoder4", d_state=16, d_conv=4, expand=2,
+                 adaptive_lambda=0.75, coverage_min_factor=0.25,
+                 coverage_max_factor=2.5, delta_min=0.5, delta_max=1.5):
         super().__init__()
         c_list = list(c_list or [8, 16, 24, 32, 48, 64])
         if groups <= 0 or d_state <= 0 or d_conv <= 0 or expand <= 0:
             raise ValueError("groups, d_state, d_conv and expand must be positive.")
         if len(c_list) != 6 or any(c <= 0 or c % 4 or c % groups for c in c_list):
             raise ValueError("channels must contain six positive multiples of 4 and groups.")
-        if variant not in {"baseline", "unfused_control", "sampled_index", "sampled_constant", "sampled_geometry"}:
+        if variant not in {"baseline", "unfused_control", "sampled_index", "sampled_constant", "sampled_geometry", *ADAPTIVE_VARIANTS}:
             raise ValueError(f"Unknown variant: {variant}")
         stages = {"encoder4", "encoder5", "encoder6", "decoder1", "decoder2", "decoder3"}
         if geometry_stage not in stages:
             raise ValueError(f"geometry_stage must be one of {sorted(stages)}")
         if not (0 < sample_ratio <= 1) or sampling_power <= 0 or not math.isfinite(sampling_power):
             raise ValueError("Invalid sampling ratio or power.")
+        if not 0 <= adaptive_lambda <= 1 or not math.isfinite(adaptive_lambda):
+            raise ValueError("adaptive_lambda must be finite and in [0, 1].")
+        if not 0 < coverage_min_factor < 1 < coverage_max_factor:
+            raise ValueError("coverage factors must satisfy 0 < min < 1 < max.")
+        if not 0 < delta_min < 1 < delta_max:
+            raise ValueError("delta bounds must satisfy 0 < min < 1 < max.")
         self.bridge = bridge
         self.backend = backend
         self.variant = variant
@@ -195,7 +249,8 @@ class UltraLight_VM_UNet(nn.Module):
         def pvm(input_dim, output_dim, stage):
             return PVMLayer(input_dim, output_dim, d_state, d_conv, expand, groups, backend,
                             variant if stage == geometry_stage else "baseline",
-                            sample_ratio, sampling_power)
+                            sample_ratio, sampling_power, adaptive_lambda,
+                            coverage_min_factor, coverage_max_factor, delta_min, delta_max)
 
         self.encoder1 = nn.Sequential(nn.Conv2d(input_channels, c_list[0], 3, padding=1))
         self.encoder2 = nn.Sequential(nn.Conv2d(c_list[0], c_list[1], 3, padding=1))

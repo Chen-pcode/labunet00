@@ -17,16 +17,17 @@ def main():
     parser.add_argument("--seeds", nargs="+", type=int, default=[42])
     parser.add_argument("--epoch", "--epochs", dest="epochs", type=int,
                         help="Total epochs for every run; default comes from config")
-    parser.add_argument("--variants", nargs="+", default=["baseline", "unfused_control", "sampling_only", "constant_scale", "geometry"])
+    parser.add_argument("--variants", nargs="+", default=["baseline", "uniform_sampling", "adaptive_sampling", "adaptive_geometry", "adaptive_coverage", "main"])
     parser.add_argument("--set", action="append", default=[], dest="overrides")
     parser.add_argument("--execute", action="store_true")
     parser.add_argument("--evaluate", action="store_true", help="Final test evaluation; omit during validation-only screening")
+    parser.add_argument("--include-other-isic", action="store_true", help="Supplementary other-ISIC test")
     args = parser.parse_args()
     if args.epochs is not None and args.epochs < 1:
         parser.error("--epoch must be positive")
     for source in args.sources:
         for variant in args.variants:
-            preset = "geometry" if variant == "main" else variant
+            preset = "cclas" if variant == "main" else variant
             config = ROOT / "configs" / "ablations" / f"{preset}.yaml"
             if not config.is_file():
                 raise ValueError(f"Unknown configuration: {variant}")
@@ -37,6 +38,8 @@ def main():
                     "--run-dir", str(run_dir), "--set", f"data.source={source}", "--seed", str(seed)]
                 if args.epochs is not None:
                     command.extend(["--epoch", str(args.epochs)])
+                if args.include_other_isic:
+                    command.append("--include-other-isic")
                 for override in args.overrides:
                     command.extend(["--set", override])
                 print(subprocess.list2cmdline(command), flush=True)

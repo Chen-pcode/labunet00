@@ -47,6 +47,7 @@ def aggregate_runs(root, output):
                    seeds=",".join(str(r["seed"]) for r in rows), n_runs=len(rows))
         out["hd95_failed_count_sum"] = sum(r.get("hd95_failed_count", 0) for r in rows)
         out["hd95_finite_count_sum"] = sum(r.get("hd95_finite_count", 0) for r in rows)
+        out["empty_prediction_count_sum"] = sum(r.get("empty_prediction_count", 0) for r in rows)
         out["hd95_definition"] = "per-seed finite-case mean; failures separately counted"
         out["flops_definition"] = "core arithmetic estimate, 2 FLOPs/MAC, includes selective scan; see profile.json"
         for metric in ("params", "flops", "size_mb", "fps", "dice", "iou", "miou", "accuracy", "sensitivity", "specificity", "f1", "hd95"):
@@ -71,7 +72,7 @@ def main(argv=None):
         choice.add_argument("--baseline", dest="experiment", action="store_const", const="baseline",
                             help="Select the original baseline variant")
         choice.add_argument("--main", "--main-experiment", dest="experiment", action="store_const", const="main",
-                            help="Select the main experiment: sampled_geometry")
+                            help="Select the main experiment: coverage-constrained lesion-adaptive sampling")
         choice.add_argument("--ablation", choices=ABLATIONS, help="Select one named ablation")
         p.add_argument("--epoch", "--epochs", dest="epochs", type=positive_int,
                        help="Total training epochs (not extra epochs when resuming)")
@@ -83,6 +84,8 @@ def main(argv=None):
         p.add_argument("--resume")
         p.add_argument("--stop-after-epoch", type=int)
         p.add_argument("--save-predictions", action="store_true")
+        p.add_argument("--include-other-isic", action="store_true",
+                       help="Also report the other ISIC test set as supplementary transfer")
     p = sub.add_parser("evaluate")
     p.add_argument("--checkpoint", required=True)
     p.add_argument("--data-root")
@@ -91,6 +94,7 @@ def main(argv=None):
     p.add_argument("--backend", choices=["cuda", "reference"])
     p.add_argument("--save-predictions", action="store_true")
     p.add_argument("--skip-profile", action="store_true")
+    p.add_argument("--include-other-isic", action="store_true")
     p = sub.add_parser("audit")
     p.add_argument("--data-root", default="../data")
     p.add_argument("--output-dir", default="reports/data_audit")
@@ -108,11 +112,13 @@ def main(argv=None):
         best = train(config, args.run_dir, args.device, args.resume, args.stop_after_epoch)
         if args.command == "run":
             from .evaluation import evaluate_checkpoint
-            evaluate_checkpoint(best, device=args.device, save_predictions=args.save_predictions)
+            evaluate_checkpoint(best, device=args.device, save_predictions=args.save_predictions,
+                                include_other_isic=args.include_other_isic)
     elif args.command == "evaluate":
         from .evaluation import evaluate_checkpoint
         evaluate_checkpoint(args.checkpoint, args.data_root, args.output_dir, args.device, args.backend,
-                            args.save_predictions, not args.skip_profile)
+                            args.save_predictions, not args.skip_profile,
+                            include_other_isic=args.include_other_isic)
     elif args.command == "audit":
         from .data import make_manifest, audit_manifest
         manifest = make_manifest(args.data_root)
@@ -120,7 +126,7 @@ def main(argv=None):
         for source in ("isic2017", "isic2018"):
             report = audit_manifest(manifest, source)
             write_json(Path(args.output_dir) / f"{source}.json", report)
-            print(source, {k:(v["total"], v["clean_count"]) for k,v in report["tests"].items()})
+            print(source, {k: v["total"] for k, v in report["tests"].items()})
     else:
         aggregate_runs(args.root, args.output)
 

@@ -20,6 +20,11 @@ model:
   geometry_stage: encoder4
   sample_ratio: 0.75
   sampling_power: 1.5
+  adaptive_lambda: 0.75
+  coverage_min_factor: 0.25
+  coverage_max_factor: 2.5
+  delta_min: 0.5
+  delta_max: 1.5
 training:
   epochs: 250
   batch_size: 8

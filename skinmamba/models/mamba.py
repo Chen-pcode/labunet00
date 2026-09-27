@@ -36,7 +36,7 @@ def selective_scan_reference(u, delta, A, B, C, D=None, z=None):
 
 
 def mamba_forward(module, hidden_states, delta_factors=None, backend="reference"):
-    """Full-sequence Mamba-1 forward with optional fixed-geometry delta factors."""
+    """Full-sequence Mamba-1 forward with shared or per-image delta factors."""
     if hidden_states.ndim != 3 or hidden_states.shape[-1] != module.d_model:
         raise ValueError("Mamba input must have shape [batch, length, d_model].")
     if backend == "cuda" and not hidden_states.is_cuda:
@@ -51,9 +51,17 @@ def mamba_forward(module, hidden_states, delta_factors=None, backend="reference"
     raw_delta = F.linear(dt, module.dt_proj.weight, bias=None).transpose(1, 2)
     delta = F.softplus(raw_delta.float() + module.dt_proj.bias.float()[None, :, None])
     if delta_factors is not None:
-        if delta_factors.ndim != 1 or delta_factors.numel() != length:
-            raise ValueError("delta_factors must contain one factor per sequence token.")
-        delta = delta * delta_factors.to(device=delta.device, dtype=delta.dtype)[None, None, :]
+        if delta_factors.ndim == 1:
+            if delta_factors.numel() != length:
+                raise ValueError("delta_factors must contain one factor per sequence token.")
+            factors = delta_factors[None, None, :]
+        elif delta_factors.ndim == 2:
+            if delta_factors.shape != (hidden_states.shape[0], length):
+                raise ValueError("Batched delta_factors must have shape [batch, length].")
+            factors = delta_factors[:, None, :]
+        else:
+            raise ValueError("delta_factors must have shape [length] or [batch, length].")
+        delta = delta * factors.to(device=delta.device, dtype=delta.dtype)
     B, C = B.transpose(1, 2).contiguous(), C.transpose(1, 2).contiguous()
     A = -torch.exp(module.A_log.float())
     if backend == "cuda":

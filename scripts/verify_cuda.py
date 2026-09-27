@@ -55,12 +55,15 @@ def short_parity(torch, precision, mode):
     xr = values.clone().requires_grad_(True)
     factors = torch.linspace(.25, 2.5, 19, device="cuda")
     factors[0] = 1
+    if mode == "batched_geometry":
+        factors = torch.stack((factors, factors.flip(0)))
+        factors[:, 0] = 1
     limits = tolerance(precision)
     with autocast(torch, precision):
         if mode == "official_baseline":
             y, yr = official(x), reference(xr)
         else:
-            ds = factors if mode == "geometry" else None
+            ds = factors if mode in ("geometry", "batched_geometry") else None
             y = mamba_forward(official, x, ds, "cuda")
             yr = mamba_forward(reference, xr, ds, "reference")
     max_output = compare(torch, y, yr, atol=limits["forward_atol"], rtol=limits["forward_rtol"])
@@ -84,7 +87,7 @@ def short_parity(torch, precision, mode):
         xf = values.clone().requires_grad_(True)
         with torch.autocast("cuda", enabled=False):
             yf = (reference(xf) if mode == "official_baseline" else
-                  mamba_forward(reference, xf, factors if mode == "geometry" else None, "reference"))
+                  mamba_forward(reference, xf, factors if mode in ("geometry", "batched_geometry") else None, "reference"))
         error = compare(torch, y, yf, atol=limits["forward_atol"], rtol=limits["forward_rtol"])
         (yf.float() * probe).mean().backward()
         input_error = compare(torch, x.grad, xf.grad,
@@ -178,9 +181,11 @@ def main():
         report["requested_precisions"] = precisions
         jobs = []
         for precision in precisions:
-            jobs.extend(("short_parity", precision, mode) for mode in ("official_baseline", "unfused_control", "geometry"))
+            jobs.extend(("short_parity", precision, mode) for mode in
+                        ("official_baseline", "unfused_control", "geometry", "batched_geometry"))
             jobs.extend(("network", precision, variant) for variant in
-                        ("baseline", "unfused_control", "sampled_index", "sampled_constant", "sampled_geometry"))
+                        ("baseline", "unfused_control", "sampled_index", "sampled_constant", "sampled_geometry",
+                         "adaptive_index", "adaptive_geometry", "adaptive_coverage", "cclas"))
         for kind, precision, mode in jobs:
             label = f"{kind}/{precision}/{mode}"
             print(f"Checking {label}", flush=True)

@@ -67,7 +67,7 @@ def test_source_validation_exclusion_and_deterministic_augmentation(fixture_data
     assert set(ds[0]["mask"].unique().tolist()).issubset({0, 1})
 
 
-def test_complete_train_resume_and_three_domain_evaluation(fixture_data, tmp_path):
+def test_complete_train_resume_and_source_ph2_evaluation(fixture_data, tmp_path):
     torch.set_num_threads(1)
     # An overlapping test image must still be evaluated as part of the full set.
     source = fixture_data / "isic2018/train/images/isic2018_train_0.png"
@@ -86,8 +86,8 @@ def test_complete_train_resume_and_three_domain_evaluation(fixture_data, tmp_pat
         torch.testing.assert_close(one["model"][key], two["model"][key], rtol=0, atol=0)
     assert one["best_epoch"] == two["best_epoch"]
     report = evaluate_checkpoint(resumed / "best.pt", device="cpu", profile_iterations=2)
-    assert {row["target"] for row in report["results"]} == {"isic2017", "isic2018", "ph2"}
-    assert len(report["results"]) == 3
+    assert {row["target"] for row in report["results"]} == {"isic2018", "ph2"}
+    assert len(report["results"]) == 2
     assert all(row["subset"] == "full" and row["n"] == 2 for row in report["results"])
     assert report["audit"]["tests"]["isic2017"]["overlap_ids"] == ["isic2017_test_0"]
     for row in report["results"]:
@@ -96,6 +96,8 @@ def test_complete_train_resume_and_three_domain_evaluation(fixture_data, tmp_pat
         assert row["dice"] == row["f1"]
     assert report["profile"]["device"] == "cpu"
     assert (resumed / "evaluation/summary.csv").is_file()
+    assert {row["target"] for row in evaluate_checkpoint(resumed / "best.pt", device="cpu",
+        profile_iterations=1, include_other_isic=True)["results"]} == {"isic2017", "isic2018", "ph2"}
     bad = copy.deepcopy(config)
     bad["evaluation"]["threshold"] = .7
     assert resume_signature(bad) != resume_signature(config)
@@ -138,10 +140,14 @@ def test_aggregation_separates_data_threshold_and_hardware(tmp_path):
 
 
 @pytest.mark.parametrize("flag,variant", [
-    (["--baseline"], "baseline"), (["--main"], "sampled_geometry"),
-    (["--main-experiment"], "sampled_geometry"),
+    (["--baseline"], "baseline"), (["--main"], "cclas"),
+    (["--main-experiment"], "cclas"),
     (["--ablation", "sampling_only"], "sampled_index"),
     (["--ablation", "constant_scale"], "sampled_constant"),
+    (["--ablation", "uniform_sampling"], "sampled_index"),
+    (["--ablation", "adaptive_sampling"], "adaptive_index"),
+    (["--ablation", "adaptive_geometry"], "adaptive_geometry"),
+    (["--ablation", "adaptive_coverage"], "adaptive_coverage"),
     (["--ablation", "no_bridge"], "baseline"),
     (["--ablation", "bce_only"], "baseline"),
 ])
@@ -185,5 +191,22 @@ def test_cli_runs_selected_baseline_for_one_epoch_and_seed(fixture_data, tmp_pat
     assert checkpoint["config"]["seed"] == 2026
     assert checkpoint["config"]["model"]["variant"] == "baseline"
     report = json.loads((run_dir / "evaluation/results.json").read_text(encoding="utf-8"))
-    assert len(report["results"]) == 3
+    assert len(report["results"]) == 2
     assert all(row["subset"] == "full" and row["seed"] == 2026 for row in report["results"])
+
+
+def test_cli_runs_cclas_and_profiles_one_epoch(fixture_data, tmp_path):
+    torch.set_num_threads(1)
+    config_path = Path(__file__).resolve().parents[1] / "configs/smoke_cpu.yaml"
+    run_dir = tmp_path / "cclas_one_epoch"
+    main(["run", "--main", "--epoch", "1", "--seed", "2026", "--config", str(config_path),
+          "--data-root", str(fixture_data), "--run-dir", str(run_dir), "--device", "cpu",
+          "--set", "model.d_state=2"])
+    checkpoint = load_checkpoint(run_dir / "best.pt")
+    assert checkpoint["config"]["model"]["variant"] == "cclas"
+    report = json.loads((run_dir / "evaluation/results.json").read_text(encoding="utf-8"))
+    assert report["sampling"]["coverage"] and report["sampling"]["bounded_delta"]
+    assert all("empty_prediction_count" in row for row in report["results"])
+    assert report["profile"]["flops"] is not None
+    assert any("score_head" in key for key in checkpoint["model"])
+    assert report["profile"]["params"] > 0

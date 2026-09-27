@@ -41,17 +41,26 @@ def evaluate_model(model, loader, device="cuda", threshold=.5, output_kind="logi
             predictions = (prob >= threshold).cpu().numpy()[:, 0]
             truth = batch["mask"].numpy()[:, 0] >= .5
             for key, pred, target in zip(batch["id"], predictions, truth):
-                rows.append({"id": key, **segmentation_metrics(pred, target)})
+                rows.append({"id": key, **segmentation_metrics(pred, target),
+                             "empty_prediction": int(not pred.any()),
+                             "empty_target": int(not target.any()),
+                             "target_fraction": float(target.mean()),
+                             "target_border_touching": int(target[0].any() or target[-1].any()
+                                                           or target[:, 0].any() or target[:, -1].any())})
                 if save_dir:
                     Image.fromarray(pred.astype(np.uint8) * 255).save(Path(save_dir) / f"{key}.png")
     finally:
         for module, was_training in modes:
             module.training = was_training
-    return rows, aggregate_metrics(rows)
+    summary = aggregate_metrics(rows)
+    summary["empty_prediction_count"] = sum(row["empty_prediction"] for row in rows)
+    summary["empty_target_count"] = sum(row["empty_target"] for row in rows)
+    return rows, summary
 
 
 def evaluate_checkpoint(checkpoint_path, data_root=None, output_dir=None, device="cuda", backend=None,
-                        save_predictions=False, run_profile=True, profile_iterations=None):
+                        save_predictions=False, run_profile=True, profile_iterations=None,
+                        include_other_isic=False):
     checkpoint = load_checkpoint(checkpoint_path)
     config = copy.deepcopy(checkpoint["config"])
     if data_root:
@@ -78,7 +87,10 @@ def evaluate_checkpoint(checkpoint_path, data_root=None, output_dir=None, device
             iterations=profile_iterations or options.get("iterations", 100))
         write_json(output_dir / "profile.json", complexity)
     results = []
-    for domain in ("isic2017", "isic2018", "ph2"):
+    targets = [config["data"]["source"], "ph2"]
+    if include_other_isic:
+        targets.append("isic2017" if config["data"]["source"] == "isic2018" else "isic2018")
+    for domain in targets:
         records = [r for r in current["records"] if r["domain"] == domain and r["split"] == "test"]
         ds = SkinDataset(config["data"]["root"], records, config["data"]["image_size"], config["data"]["normalization"])
         loader = make_loader(ds, config["evaluation"]["batch_size"], config["training"]["workers"])

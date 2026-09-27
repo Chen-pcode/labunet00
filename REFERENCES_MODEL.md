@@ -50,11 +50,40 @@ If M is only 2, the samples are the two endpoints, so the within-row constant an
 
 Sampling changes what a fixed index-window causal convolution sees. Geometric delta calibration alone therefore does not guarantee density invariance, rotational equivariance, continuous-scale equivariance, or equivalence to a continuous spatial system. Fixed power-law sampling favors one side of each row. This is a controlled mechanism probe, not evidence of a clinically meaningful directional prior. Parameter reduction or nominal scan-token reduction must not be presented as measured acceleration.
 
+## CCLAS adaptive prototype
+
+The new `cclas` variant is a testable research hypothesis, not an established
+novelty claim. It retains the author network and official Mamba-1 scan. Only
+the selected PVM stage gains a depthwise 3x3 plus pointwise 1x1 score head.
+The head predicts a positive feature-importance map, without using the ground
+truth mask at inference. Per-row scores are mixed with uniform density and a
+discrete CDF is inverted at a fixed number of quantiles. This produces `K`
+monotone coordinates per row, including both image borders, for every image.
+`grid_sample` reads features and differentiable linear interpolation restores
+the original grid; the unsampled residual stays intact.
+
+The coverage option shrinks each row's intervals toward their uniform mean by
+the smallest common factor that places every interval within 0.25-2.5 times
+the mean. It preserves both endpoints and the fixed token count. The final
+`cclas` variant also scales the Mamba delta by each within-row interval divided
+by the mean and clamps that factor to 0.5-1.5; each row's first token has factor
+1. The score head, coverage rule, and bounded delta are separately ablated.
+These dimensionless factors are a design choice for this prototype and do not
+claim exact continuous-time discretization, lesion supervision, or rotation
+equivariance. The score head and CDF operations add latency that must be
+measured on T4. Similar adaptive/deformable scan and token selection work may
+limit novelty; literature collision review remains a separate requirement.
+
 ## Verification scope
 
 `tests/test_models.py` checks a hand-calculated recurrence, delta-bias order, fixed spatial units and row seams, nonuniform interpolation, full-uniform equivalence, meaningful gradients, controlled-variant parameter compatibility and original-grid residual preservation. A comparison against the bundled unchanged source checks state keys, exact initialized tensors and original probability outputs against sigmoid of new logits. This comparison injects the **reference backend into both versions**, so it is an architecture/initialization check, not verification of the external CUDA package.
 
-The CUDA/reference parity test is skipped without CUDA/the official package and must never be reported as passed when skipped. No segmentation accuracy, novelty, hardware speed or paper reproduction is established by these software checks.
+The adaptive tests additionally check fixed token count, border coverage,
+interval bounds, distinct coverage/delta ablations, score-head gradients and
+an end-to-end one-epoch CPU checkpoint/evaluation path. The CUDA/reference
+parity test is skipped without CUDA/the official package and must never be
+reported as passed when skipped. No segmentation accuracy, novelty, hardware
+speed or paper reproduction is established by these software checks.
 
 ## Kaggle installation and mandatory GPU verification
 
@@ -62,4 +91,4 @@ The CUDA/reference parity test is skipped without CUDA/the official package and 
 
 The install script defaults to the versions resolved by pip at run time, **not an asserted universally compatible version pair**. Use its `--mamba-version` and `--causal-conv1d-version` options to pin versions after a successful environment has been verified. The script records resolved versions. Mamba-1 API/kernel compatibility is checked by actual execution, not inferred from package names or successful import. Keep the install report and GPU verification report with experiment results.
 
-`scripts/verify_cuda.py` requires CUDA and the official extensions and exits nonzero on missing GPU or failed checks; it never treats a skip as verification. It checks official versus reference short-sequence forward/input-gradient/parameter-gradient agreement, including nonuniform delta factors and the unfused control. It checks all five complete network variants with 256², batch 1 synthetic input and backward. `--precision` selects `fp32`, `amp_fp16`, `amp_bf16`, or `all`; the default `all` runs fp32 and amp_fp16 (the relevant T4 modes). BF16 requires explicit support and is not a T4 default. Reports include tolerances, device, versions, allocated/reserved peak memory and failure details. These are numerical/software checks; they do not train on a dataset or establish segmentation improvement.
+`scripts/verify_cuda.py` requires CUDA and the official extensions and exits nonzero on missing GPU or failed checks; it never treats a skip as verification. It checks official versus reference short-sequence forward/input-gradient/parameter-gradient agreement, including nonuniform and batched delta factors and the unfused control. It checks baseline, old sampled controls and all four adaptive network variants with 256², batch 1 synthetic input and backward. `--precision` selects `fp32`, `amp_fp16`, `amp_bf16`, or `all`; the default `all` runs fp32 and amp_fp16 (the relevant T4 modes). BF16 requires explicit support and is not a T4 default. Reports include tolerances, device, versions, allocated/reserved peak memory and failure details. These are numerical/software checks; they do not train on a dataset or establish segmentation improvement.

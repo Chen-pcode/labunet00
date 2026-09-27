@@ -1,0 +1,4 @@
+extends: ../base.yaml
+name: adaptive_sampling
+model:
+  variant: adaptive_index

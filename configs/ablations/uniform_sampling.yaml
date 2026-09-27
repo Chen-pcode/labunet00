@@ -1,0 +1,5 @@
+extends: ../base.yaml
+name: uniform_sampling
+model:
+  variant: sampled_index
+  sampling_power: 1.0

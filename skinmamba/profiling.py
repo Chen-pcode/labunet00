@@ -95,8 +95,10 @@ def _count_core_flops(model: nn.Module, inputs: torch.Tensor) -> dict[str, Any]:
     def wrapper_hook(module, args, output):
         spec = module.profiling_scan_spec(args, output)
         counts.update(_mamba_core_flops(spec))
+        if spec.get("sampled", False):
+            omitted.add("sampling and reconstruction")
         if spec.get("delta_scaled", False):
-            omitted.add("geometric delta multiplication, sampling and reconstruction")
+            omitted.add("geometric delta multiplication")
 
     def standard_hook(module, args, output):
         x = args[0]

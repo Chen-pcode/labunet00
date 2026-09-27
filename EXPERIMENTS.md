@@ -13,7 +13,7 @@
 
 ## 核心消融（默认只改encoder4）
 
-命令可选择 `--baseline`、`--main` 或 `--ablation NAME`；轮数用 `--epoch N`，随机种子用 `--seed N`。当前主实验是A4，其余条件从共同的来源配置继承；1 epoch用于跑通流程，正式轮数由实验计划确定。
+命令可选择 `--baseline`、`--main` 或 `--ablation NAME`；轮数用 `--epoch N`，随机种子用 `--seed N`。A4 是已完成的旧几何原型；当前新主实验为 CCLAS，完整设计见 [CCLAS_EXPERIMENTS.md](CCLAS_EXPERIMENTS.md)。1 epoch 用于跑通流程，不能作为有效性结果。
 
 | 编号 / 配置 | 变更 | 回答的问题 |
 |---|---|---|
@@ -33,7 +33,7 @@ A2/A3/A4参数量相同、采样点相同。真正支持几何机制必须同时
 1. GPU环境核验 + baseline短运行，检查loss下降、mask叠合与验证曲线；不查看跨域test选方案。
 2. ISIC2018、seed42，对A0–A4统一50 epoch探索。先确保分割信号可学习；50 epoch排名不替代正式结论。
 3. 若A4有验证收益，统一250 epoch，以42/43/44重跑A0–A4。报告mean±sample std，逐种子原始结果保留。
-4. ISIC2017独立训练，至少确认A0/A4；如果声称机制跨来源成立，补A2/A3。最终一次性评估3个测试域。
+4. ISIC2017独立训练，至少确认A0/A4；如果声称机制跨来源成立，补A2/A3。主结果只评估本来源测试集与 PH²；另一 ISIC 测试集仅作显式补充分析。
 5. 仅在前述有效后再做敏感性：ratio={0.5,0.75,1.0}（power固定1.5）；stage={encoder4,encoder5,encoder6}每次只改一个；power={1.0,1.5,2.0}。用val选取，不用test筛超参数。
 
 结构/监督对照配置另有 no_bridge、wider、bce_only、dice_only；这些是解释基线瓶颈的可选对照，不属于“新模块贡献”。宽度对照应报告精度-延迟折中。
