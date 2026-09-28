@@ -159,6 +159,10 @@ python scripts/summarize_psm.py --root /kaggle/working/runs/psm_screen \
 
 会跑 `baseline / baseline_aug / memory_aug / main` 四组。`validation.csv` 报告**实际选中 checkpoint 的** val_loss/val_dice，不混用最低 loss 和最高 Dice 所在的不同 epoch。50 epoch 只是早期信号；若模型仍在改善，应在预先统一的更长预算下复核，不能断言已经收敛。筛选预算与正式预算不同，使用新目录从头训练；不要把 50-epoch cosine 运行强行续成 100-epoch 正式运行。
 
+窗口会实时显示 `[Experiment 1/4]`、`[Epoch 1/50]`、训练/验证 batch 进度、loss、验证 Dice 和最佳 epoch。数据审计、构建模型、保存 checkpoint 也有阶段提示；数据审计完成前尚未进入 epoch。默认首个 batch、每 20 个 batch、最后一个 batch 打印一次；若距离上次日志超过 30 秒，也在下一个 batch 完成时打印。需要更频繁输出可加 `--set training.log_interval=5`。
+
+矩阵脚本用 Python 无缓冲子进程并逐行转发日志，适配 Kaggle `!python` 单元格。没有 `--execute` 时会明确显示 `DRY RUN`，此时只列出命令，不会训练，也不会出现 epoch 进度。已启动的旧进程不会因 `git pull` 自动加载新日志代码；本次运行仍可从各 run 目录的 `history.csv` 查看已完成 epoch。
+
 ### 固定方案后的正式实验
 
 下面命令跑建议的六组、两个源域、三个 seed，并对每组做 source+PH2 测试。只有冻结配置后才运行：

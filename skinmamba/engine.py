@@ -29,11 +29,12 @@ def amp_context(device, precision):
     return torch.autocast(device_type=device.type, dtype=torch.float16, enabled=precision == "amp_fp16")
 
 
-def validate(model, loader, criterion, device, precision, threshold):
+def validate(model, loader, criterion, device, precision, threshold, progress_label=None, log_interval=20):
     model.eval()
     loss_sum, count, dice_sum = 0.0, 0, 0.0
+    last_log = time.perf_counter()
     with torch.inference_mode():
-        for batch in loader:
+        for step, batch in enumerate(loader, 1):
             image = batch["image"].to(device, non_blocking=True)
             target = batch["mask"].to(device, non_blocking=True)
             with amp_context(device, precision):
@@ -47,6 +48,12 @@ def validate(model, loader, criterion, device, precision, threshold):
             count += n
             loss_sum += loss.item() * n
             dice_sum += dice.sum().item()
+            if progress_label and (step == 1 or step == len(loader) or step % max(1, log_interval) == 0
+                                   or time.perf_counter() - last_log >= 30):
+                print(f"{progress_label} Validation {step}/{len(loader)} batches "
+                      f"({100 * step / len(loader):.0f}%) loss={loss_sum/count:.5f} "
+                      f"dice={dice_sum/count:.5f}", flush=True)
+                last_log = time.perf_counter()
     return {"val_loss": loss_sum / count, "val_dice": dice_sum / count}
 
 
@@ -71,8 +78,11 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
         raise FileExistsError(f"Run already exists: {run_dir}; use --resume or a new --run-dir")
     run_dir.mkdir(parents=True, exist_ok=True)
     seed_everything(config["seed"], config["training"].get("strict_determinism", False))
+    print("[Setup] Preparing dataset: pairing files and checking image hashes. "
+          "Training epochs start after this audit.", flush=True)
     manifest = make_manifest(config["data"]["root"])
     audit = audit_manifest(manifest, config["data"]["source"])
+    print(f"[Setup] Dataset audit complete: {len(manifest['records'])} images.", flush=True)
     write_json(run_dir / "data_audit.json", audit)
     validate_source_split(audit, config["data"].get("validation_overlap_policy", "exclude"))
     checkpoint = load_checkpoint(resume) if resume else None
@@ -99,6 +109,8 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
         "n_train": len(train_ds), "n_validation_used": len(val_ds), "raw_files_modified": False})
     options = config["training"]
     val_loader = make_loader(val_ds, options["batch_size"], options["workers"])
+    print(f"[Setup] Building {config['name']} on {device}; source={source}, seed={config['seed']}, "
+          f"train={len(train_ds)}, val={len(val_ds)}, epochs={options['epochs']}.", flush=True)
     model = build_model(config).to(device)
     criterion = BCEDiceLoss(**config.get("loss", {}))
     optimizer = torch.optim.AdamW(model.parameters(), lr=options["lr"], weight_decay=options["weight_decay"],
@@ -121,17 +133,23 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
         best_artifact = dict(model=best_weights, config=config, epoch=best_epoch,
                              manifest=manifest, best=best, best_epoch=best_epoch)
         atomic_torch_save(best_artifact, run_dir / "best.pt")
+        print(f"[Resume] {start}/{options['epochs']} epochs completed; "
+              f"continuing at epoch {start + 1} if scheduled.", flush=True)
     limit = min(options["epochs"], stop_after_epoch or options["epochs"])
     for epoch in range(start, limit):
         train_ds.epoch = epoch
         loader = make_loader(train_ds, options["batch_size"], options["workers"], shuffle=True, seed=config["seed"])
         model.train()
         total_loss, seen, started = 0.0, 0, time.perf_counter()
+        label = f"[Epoch {epoch + 1}/{options['epochs']}]"
+        log_interval = max(1, int(options.get("log_interval", 20)))
+        last_log = started
         component_sums = {}
         # Isolate style draws from architecture-dependent parameter initialization.
         # Re-created per epoch, so exact epoch-boundary resume needs no extra state.
         style_generator = torch.Generator(device=device).manual_seed(config["seed"] + 1000003 * (epoch + 1))
         lr = optimizer.param_groups[0]["lr"]
+        print(f"{label} Training started: {len(loader)} batches, lr={lr:.6g}", flush=True)
         for step, batch in enumerate(loader):
             optimizer.zero_grad(set_to_none=True)
             image = batch["image"].to(device, non_blocking=True)
@@ -150,9 +168,17 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
             for key, value in components.items():
                 component_sums[key] = component_sums.get(key, 0.) + float(value) * len(image)
             seen += len(image)
-            if (step + 1) % options.get("log_interval", 20) == 0:
-                print(f"epoch={epoch+1} batch={step+1}/{len(loader)} train_loss={total_loss/seen:.5f}", flush=True)
-        scores = validate(model, val_loader, criterion, device, options["precision"], config["evaluation"]["threshold"])
+            now = time.perf_counter()
+            if step == 0 or step + 1 == len(loader) or (step + 1) % log_interval == 0 or now - last_log >= 30:
+                elapsed = now - started
+                remaining = elapsed / (step + 1) * (len(loader) - step - 1)
+                print(f"{label} Train {step+1}/{len(loader)} batches "
+                      f"({100*(step+1)/len(loader):.0f}%) loss={total_loss/seen:.5f} "
+                      f"elapsed={elapsed:.0f}s train_eta={remaining:.0f}s", flush=True)
+                last_log = now
+        print(f"{label} Validating source split: {len(val_loader)} batches", flush=True)
+        scores = validate(model, val_loader, criterion, device, options["precision"],
+                          config["evaluation"]["threshold"], progress_label=label, log_interval=log_interval)
         scheduler.step()
         score = scores[options["selection"]]
         improved = score < best if options["selection"] == "val_loss" else score > best
@@ -168,11 +194,15 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
         state = dict(model=model.state_dict(), best_model=best_weights, optimizer=optimizer.state_dict(),
                      scheduler=scheduler.state_dict(), scaler=scaler.state_dict(), rng=rng_state(),
                      epoch=epoch, best=best, best_epoch=best_epoch, config=config, manifest=manifest, history=history)
+        print(f"{label} Saving checkpoint...", flush=True)
         atomic_torch_save(state, run_dir / "last.pt")
         if improved:
             atomic_torch_save(dict(model=best_weights, config=config, epoch=epoch, manifest=manifest,
                                    best=best, best_epoch=best_epoch), run_dir / "best.pt")
         write_csv(run_dir / "history.csv", history)
+        print(f"{label} Complete: train_loss={total_loss/seen:.5f} "
+              f"val_loss={scores['val_loss']:.5f} val_dice={scores['val_dice']:.5f} "
+              f"best_epoch={best_epoch+1}" + (" (new best)" if improved else ""), flush=True)
         print(json.dumps(row), flush=True)
     if best_weights is None:
         raise ValueError("No epoch was trained and no checkpoint was resumed")

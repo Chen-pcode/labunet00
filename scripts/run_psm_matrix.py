@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 from pathlib import Path
 import shlex
 import subprocess
@@ -17,6 +18,27 @@ STAGES = {
                  "psm_moments_only", "psm_no_variance"],
     "formal": list(PSM_PRESETS),
 }
+
+
+def run_streaming(command):
+    """Relay child output through this process so notebook cells see it live."""
+    with subprocess.Popen(command, cwd=ROOT, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                          text=True, encoding="utf-8", errors="replace", bufsize=1,
+                          env={**os.environ, "PYTHONIOENCODING": "utf-8"}) as process:
+        try:
+            for line in process.stdout:
+                print(line, end="", flush=True)
+            code = process.wait()
+        except BaseException:
+            process.terminate()
+            try:
+                process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                process.wait()
+            raise
+        if code:
+            raise subprocess.CalledProcessError(code, command)
 
 
 def main(argv=None):
@@ -37,11 +59,19 @@ def main(argv=None):
         parser.error("Positive epochs and seeds in [0,2**32) required")
     if args.stage == "screen" and args.evaluate:
         parser.error("Screen uses source validation only; --evaluate requires --stage ablation/formal")
+    variants = args.variants or STAGES[args.stage]
+    total = len(args.sources) * len(variants) * len(args.seeds)
+    print(f"PSM matrix: {total} experiments, {args.epochs} epochs each. "
+          + ("Executing training." if args.execute else "DRY RUN: commands only; add --execute to train."), flush=True)
+    current = 0
     for source in args.sources:
-        for variant in args.variants or STAGES[args.stage]:
+        for variant in variants:
             for seed in args.seeds:
+                current += 1
+                print(f"\n[Experiment {current}/{total}] source={source} variant={variant} "
+                      f"seed={seed} epochs={args.epochs}", flush=True)
                 run = Path(args.output_root).resolve() / source / variant / f"seed_{seed}"
-                command = [sys.executable, "-m", "skinmamba", "run" if args.evaluate else "train",
+                command = [sys.executable, "-u", "-m", "skinmamba", "run" if args.evaluate else "train",
                            "--config", str(ROOT / "configs/psm" / f"{source}.yaml"),
                            "--ablation", variant, "--epoch", str(args.epochs), "--seed", str(seed),
                            "--data-root", str(Path(args.data_root).resolve()), "--run-dir", str(run),
@@ -50,7 +80,8 @@ def main(argv=None):
                     command.extend(["--set", override])
                 print(subprocess.list2cmdline(command) if sys.platform == "win32" else shlex.join(command), flush=True)
                 if args.execute:
-                    subprocess.run(command, cwd=ROOT, check=True)
+                    run_streaming(command)
+                    print(f"[Experiment {current}/{total}] Complete: {run}", flush=True)
 
 
 if __name__ == "__main__":
