@@ -21,6 +21,8 @@ def aggregate_runs(root, output):
         protocol = {k: report["config"][k] for k in ("data", "training", "loss")}
         protocol["data"] = {k:v for k,v in protocol["data"].items() if k != "root"}
         protocol["threshold"] = report["config"]["evaluation"]["threshold"]
+        if "domain" in report["config"]:
+            protocol["domain"] = report["config"]["domain"]
         protocol["data_fingerprint"] = report["audit"]["fingerprint"]
         profile = report.get("profile", {})
         protocol["profiling"] = {key: profile.get(key) for key in (
@@ -73,6 +75,8 @@ def main(argv=None):
                             help="Select the original baseline variant")
         choice.add_argument("--main", "--main-experiment", dest="experiment", action="store_const", const="main",
                             help="Select reconstruction: state readback + guided spatial/channel bridges; old main: --ablation cclas")
+        choice.add_argument("--psm-main", dest="experiment", action="store_const", const="psm_main",
+                            help="New experiment: cross-scale latent memory + source-only state consistency")
         choice.add_argument("--ablation", choices=ABLATIONS, help="Select one named ablation")
         p.add_argument("--epoch", "--epochs", dest="epochs", type=positive_int,
                        help="Total training epochs (not extra epochs when resuming)")
@@ -98,6 +102,17 @@ def main(argv=None):
     p = sub.add_parser("audit")
     p.add_argument("--data-root", default="../data")
     p.add_argument("--output-dir", default="reports/data_audit")
+    p = sub.add_parser("diagnose-states", help="Source validation by default; --final includes held-out PH2")
+    p.add_argument("--checkpoint", required=True)
+    p.add_argument("--control", help="Matched checkpoint without L_dom, e.g. psm_memory_aug")
+    p.add_argument("--data-root")
+    p.add_argument("--output-dir")
+    p.add_argument("--device", default="cuda")
+    p.add_argument("--backend", choices=["cuda", "reference"])
+    p.add_argument("--final", action="store_true", help="Frozen-protocol source test + ALL 200 PH2; never for tuning")
+    p.add_argument("--bootstrap", type=int, default=500)
+    p.add_argument("--analysis-seed", type=int, default=2026)
+    p.add_argument("--interventions", action="store_true", help="Also score frozen no_carry and no_read interventions")
     p = sub.add_parser("aggregate")
     p.add_argument("--root", default="runs")
     p.add_argument("--output", default="runs/aggregate.csv")
@@ -127,6 +142,10 @@ def main(argv=None):
             report = audit_manifest(manifest, source)
             write_json(Path(args.output_dir) / f"{source}.json", report)
             print(source, {k: v["total"] for k, v in report["tests"].items()})
+    elif args.command == "diagnose-states":
+        from .state_diagnostics import diagnose_states
+        diagnose_states(args.checkpoint, args.control, args.data_root, args.output_dir, args.device,
+                        args.backend, args.final, args.bootstrap, args.analysis_seed, args.interventions)
     else:
         aggregate_runs(args.root, args.output)
 
@@ -150,6 +169,10 @@ def training_config(args):
     config = apply_overrides(config, args.overrides)
     if args.epochs is not None:
         config["training"]["epochs"] = args.epochs
+        # Versioned new suite only; historical configs keep their old schedules.
+        if config.get("experiment_suite") == "persistent_v1" and not any(
+                value.partition("=")[0] == "training.t_max" for value in args.overrides):
+            config["training"]["t_max"] = args.epochs
     if args.seed is not None:
         config["seed"] = args.seed
     if args.data_root:

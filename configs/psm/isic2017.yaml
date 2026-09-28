@@ -1,0 +1,3 @@
+extends: isic2018.yaml
+data:
+  source: isic2017

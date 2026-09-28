@@ -5,6 +5,9 @@ from .ultralight import UltraLight_VM_UNet
 def build_model(config: dict):
     options = config.get("model", config)
     family = options.get("family", "ultralight")
+    if family == "persistent":
+        from .persistent import PersistentUNet
+        return PersistentUNet(options)
     if family == "reconstruction":
         from .reconstruction import ReconstructionUNet
         return ReconstructionUNet(options)

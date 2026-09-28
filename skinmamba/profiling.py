@@ -29,7 +29,8 @@ from torch import nn
 _FLOP_SCOPE = (
     "Core arithmetic estimate per input batch; Conv/Linear use 2 FLOPs/MAC; "
     "includes Mamba-1 selective scan, HSM-SSD state matrix products, "
-    "channel attention matrix products and LocalAttender weighted aggregation. "
+    "channel attention matrix products, LocalAttender weighted aggregation, "
+    "and explicit persistent-memory update/read arithmetic when present. "
     "Excludes normalization, general activations/elementwise operations, "
     "interpolation/grid sampling, reductions outside the scan, and memory movement."
 )

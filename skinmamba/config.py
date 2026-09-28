@@ -1,16 +1,18 @@
 from __future__ import annotations
 
 import copy
+import math
 from pathlib import Path
 import yaml
 from .experiments import RECONSTRUCTION_DEFAULTS, RECONSTRUCTION_PRESETS, reconstruction_options
+from .persistent_experiments import PSM_PRESETS, persistent_experiment
 
 ABLATIONS = (
     "unfused_control", "sampling_only", "constant_scale", "geometry",
     "uniform_identity", "no_bridge", "wider", "bce_only", "dice_only",
     "uniform_sampling", "adaptive_sampling", "adaptive_geometry",
     "adaptive_coverage", "cclas",
-) + tuple(RECONSTRUCTION_PRESETS)
+) + tuple(RECONSTRUCTION_PRESETS) + tuple(PSM_PRESETS)
 
 
 def merge(base, update):
@@ -56,10 +58,22 @@ def select_experiment(config, experiment=None, ablation=None):
         return copy.deepcopy(config)
     if ablation is not None and ablation not in ABLATIONS:
         raise ValueError(f"Unknown ablation: {ablation}")
-    name = ablation or ("reconstruction" if experiment == "main" else "baseline")
+    name = ablation or ("psm_main" if experiment == "psm_main" else
+                       "reconstruction" if experiment == "main" else "baseline")
+    if name in PSM_PRESETS:
+        return persistent_experiment(config, name)
+    if experiment == "baseline" and config.get("experiment_suite") == "persistent_v1":
+        return persistent_experiment(config, "psm_baseline")
     if name in RECONSTRUCTION_PRESETS:
+        config = copy.deepcopy(config)
+        config.pop("domain", None)
+        config.pop("experiment_suite", None)
         return merge(config, {"name": name, "model": reconstruction_options(name)})
     config = copy.deepcopy(config)
+    config.pop("domain", None)
+    config.pop("experiment_suite", None)
+    for key in ("memory_dim", "memory_mode", "memory_strength"):
+        config["model"].pop(key, None)
     # Do not let irrelevant new-family settings split baseline aggregation into
     # separate groups depending on which YAML the user selected it from.
     for key in RECONSTRUCTION_DEFAULTS:
@@ -104,3 +118,26 @@ def validate_config(config):
             raise ValueError(f"training.{key} must be positive")
     if config["training"]["workers"] < 0 or config["training"]["lr"] <= 0:
         raise ValueError("workers must be nonnegative and lr must be positive")
+    domain = config.get("domain")
+    if domain is not None:
+        for key in ("weight", "pair_weight", "mean_weight", "covariance_weight", "variance_weight", "std_floor",
+                    "brightness", "contrast", "color", "gamma"):
+            value = domain[key]
+            if not isinstance(value, (int, float)) or not math.isfinite(value) or value < 0:
+                raise ValueError(f"domain.{key} must be finite and nonnegative")
+        if any(domain[k] >= 1 for k in ("brightness", "contrast", "color", "gamma")):
+            raise ValueError("Appearance perturbation magnitudes must be < 1")
+        if not isinstance(domain["two_view"], bool) or domain["location"] not in {"states", "queries"}:
+            raise ValueError("Invalid domain.two_view/location")
+        if not isinstance(domain["warmup_epochs"], int) or domain["warmup_epochs"] < 0:
+            raise ValueError("domain.warmup_epochs must be a nonnegative integer")
+        if domain["weight"] > 0 and (not domain["two_view"] or config["model"].get("family") != "persistent"):
+            raise ValueError("Positive domain.weight requires two views and a persistent-family model")
+    if config["model"].get("family") == "persistent":
+        opts = config["model"]
+        if not isinstance(opts["memory_dim"], int) or opts["memory_dim"] < 2:
+            raise ValueError("model.memory_dim must be an integer >= 2")
+        if opts["memory_mode"] not in {"persistent", "independent"}:
+            raise ValueError("Invalid model.memory_mode")
+        if not 0 < opts["memory_strength"] <= 1:
+            raise ValueError("model.memory_strength must be in (0,1]")

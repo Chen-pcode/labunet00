@@ -1,0 +1,26 @@
+extends: ../base.yaml
+name: psm_main
+experiment_suite: persistent_v1
+model:
+  family: persistent
+  variant: psm_main
+  memory_mode: persistent
+  memory_dim: 16
+  memory_strength: 0.1
+training:
+  epochs: 100
+  t_max: 100
+domain:
+  two_view: true
+  weight: 0.05
+  warmup_epochs: 5
+  location: states
+  pair_weight: 1.0
+  mean_weight: 1.0
+  covariance_weight: 1.0
+  variance_weight: 0.1
+  std_floor: 0.05
+  brightness: 0.10
+  contrast: 0.20
+  color: 0.15
+  gamma: 0.20

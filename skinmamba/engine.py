@@ -10,6 +10,7 @@ import yaml
 
 from .data import SkinDataset, make_loader, make_manifest, audit_manifest, validate_source_split
 from .losses import BCEDiceLoss
+from .domain import training_objective, domain_weight
 from .models import build_model
 from .utils import (seed_everything, rng_state, restore_rng, write_json, write_csv,
                     atomic_torch_save, load_checkpoint, environment)
@@ -126,14 +127,17 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
         loader = make_loader(train_ds, options["batch_size"], options["workers"], shuffle=True, seed=config["seed"])
         model.train()
         total_loss, seen, started = 0.0, 0, time.perf_counter()
+        component_sums = {}
+        # Isolate style draws from architecture-dependent parameter initialization.
+        # Re-created per epoch, so exact epoch-boundary resume needs no extra state.
+        style_generator = torch.Generator(device=device).manual_seed(config["seed"] + 1000003 * (epoch + 1))
         lr = optimizer.param_groups[0]["lr"]
         for step, batch in enumerate(loader):
             optimizer.zero_grad(set_to_none=True)
             image = batch["image"].to(device, non_blocking=True)
             target = batch["mask"].to(device, non_blocking=True)
             with amp_context(device, options["precision"]):
-                logits = model(image)
-            loss = criterion(logits, target)
+                loss, components = training_objective(model, image, target, criterion, config, epoch, style_generator)
             if not torch.isfinite(loss):
                 raise FloatingPointError(f"Nonfinite loss at epoch {epoch + 1}, step {step}")
             scaler.scale(loss).backward()
@@ -143,6 +147,8 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
             scaler.step(optimizer)
             scaler.update()
             total_loss += loss.item() * len(image)
+            for key, value in components.items():
+                component_sums[key] = component_sums.get(key, 0.) + float(value) * len(image)
             seen += len(image)
             if (step + 1) % options.get("log_interval", 20) == 0:
                 print(f"epoch={epoch+1} batch={step+1}/{len(loader)} train_loss={total_loss/seen:.5f}", flush=True)
@@ -155,6 +161,9 @@ def train(config, run_dir, device="cuda", resume=None, stop_after_epoch=None):
             best_weights = {key: value.detach().cpu().clone() for key, value in model.state_dict().items()}
         row = dict(epoch=epoch + 1, train_loss=total_loss / seen, **scores, lr=lr,
                    seconds=time.perf_counter() - started, best_epoch=best_epoch + 1)
+        if config.get("domain", {}).get("two_view", False):
+            row.update({f"train_{k}": v / seen for k, v in component_sums.items()})
+            row["dom_weight"] = domain_weight(config["domain"], epoch)
         history.append(row)
         state = dict(model=model.state_dict(), best_model=best_weights, optimizer=optimizer.state_dict(),
                      scheduler=scheduler.state_dict(), scaler=scaler.state_dict(), rng=rng_state(),

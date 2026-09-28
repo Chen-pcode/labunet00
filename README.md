@@ -1,5 +1,7 @@
 # Skin Mamba Lab
 
+新增实验：**跨尺度持久潜记忆 + 源域状态一致性（PSM v1）**。问题定义、完整消融和 Kaggle 命令见 [PSM_EXPERIMENTS.md](PSM_EXPERIMENTS.md)。新主实验使用 `--psm-main`；历史 `--main` 仍指 reconstruction。
+
 以官方 **UltraLight VM-UNet** 为 baseline 的独立训练、消融和跨数据集评估项目。原下载仓库和 `data` 文件夹均不修改。默认参数量 49,457；正式实验使用 Kaggle 单张 T4、256×256 输入。
 
 测试按用户提供的官方划分，**每个目标数据集只报告完整测试集（`subset=full`）**，不生成clean子集成绩。PH² 全部200张只用于测试。数据重叠检查保留在审计JSON中：官方划分之间仍可能重用图像，跨数据集结果需结合这些记录解释。
